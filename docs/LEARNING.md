@@ -503,4 +503,73 @@ Cost is a first-class series (`onchain_agent_llm_cost_usd_total`), which is what
 
 ## Phase 6: Wrap-up
 
-_(pending: what I would change with a second attempt.)_
+### Reproduction test: destroy, then apply from GHCR images
+
+The completion criterion was "a fresh machine, one `terraform apply`". Simulated by
+`terraform destroy` (cluster included) followed by `terraform apply -var
+use_local_images=false`, so nothing built on this laptop was used: the node pulled the
+two service images from the public GHCR packages CI had published.
+
+| Step | Time |
+|---|---|
+| `terraform destroy` (9 resources, cluster included) | 2 m 01 s |
+| `terraform apply -var use_local_images=false` (8 resources) | 11 m 51 s |
+| of which: cluster 1 m 22 s, ingress-nginx 1 m 05 s, kube-prometheus-stack 4 m 58 s, app chart 4 m 14 s | |
+| three demo questions through the Ingress afterwards | 42 s, 37 s, 18 s |
+
+The application chart took four minutes because the node pulled three images over the
+network (two from GHCR, LiteLLM from its registry); with `kind load` it was under three. The destroy path exercised the sharp edge from
+Phase 4 (providers configured from the cluster resource) and Terraform ordered it
+correctly: Helm releases and Secrets first, the cluster last.
+
+### Interview-shaped summary of the whole stack
+
+- **Kubernetes** gives me a declarative target: Deployments keep pods alive and roll them,
+  Services give stable names, Ingress maps hostnames to Services, ConfigMaps and Secrets
+  separate configuration from images, probes tell the platform when a pod is alive and
+  when it may receive traffic, and resource requests let the scheduler place work.
+- **Helm** packages those objects as one versioned unit with defaults and overrides, so
+  the same chart deploys with local images on kind and GHCR images anywhere else; the
+  chart version is the change signal, and `helm test` proves the wiring after install.
+- **Terraform** owns the order and the lifecycle: create the substrate (kind or EKS),
+  create the Secrets it should own, install the operators (ingress, monitoring), then the
+  application chart, with the dependency graph making the order explicit and `destroy`
+  reversing it. Its state is the one artefact to protect.
+- **The platform/cluster split** is what makes the EKS root a small file instead of a
+  fork, and it is the same split a real team uses to let one group own clusters and
+  another own what runs on them.
+
+### What I would do differently on a second attempt
+
+1. **Two Terraform roots for local too.** Configuring the kubernetes and helm providers
+   from a resource in the same apply worked, but it is the part most likely to bite
+   someone else. A `cluster` root that writes a kubeconfig and a `platform` root that
+   reads it is duller and safer; "one apply" could be a wrapper script.
+2. **Raw integers as strings from the MCP server.** A JavaScript client already mangled
+   a wei balance above 2^53. The exact-decimal strings are authoritative today; the raw
+   fields should be strings too so no client can get it wrong.
+3. **Bump the chart version in the same change as any template edit, enforced by CI**
+   (compare `Chart.yaml` against `main` when `templates/` changed). I lost twenty minutes
+   to a "0 changed" apply that was doing exactly what Helm semantics say.
+4. **Pin the kind node image from the provider's default, in the provider's terms.** The
+   Kubernetes version should be an explicit variable that CI checks against the provider
+   version, not something discovered by a failed `kubeadm init`.
+5. **A smaller tool schema payload.** Nine tool schemas are resent on every round-trip and
+   dominate prompt tokens with an 8B model. Shorter descriptions, or letting the agent
+   send only the tools relevant to the question, would cut latency more than any
+   infrastructure change.
+6. **Alertmanager plus a notification channel**, even a local webhook sink, so the four
+   alert rules end somewhere visible instead of only in the Prometheus UI.
+7. **Trace-level visibility for the tool loop** (Langfuse or OpenTelemetry through the
+   gateway). Metrics show that a question took 60 s; a trace would show which of the two
+   LLM round-trips took 50 of them.
+
+### What held up well
+
+- Read-only by construction never needed revisiting; the grep guard is cheap and loud.
+- The gateway alias indirection made "no API key" a configuration decision (ADR-0007)
+  instead of a rewrite.
+- Health-gated startup in compose, readiness probes in Kubernetes, and `wait = true` in
+  Terraform are the same idea three times, and each layer caught real misorderings.
+- Writing the ADRs first meant every later debugging session had a document to update
+  rather than a decision to reconstruct.

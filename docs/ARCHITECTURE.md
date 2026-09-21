@@ -121,7 +121,8 @@ flowchart TB
                 cm["ConfigMap: litellm-config"]
             end
             subgraph mon_ns["ns: monitoring"]
-                kps["kube-prometheus-stack<br/>Prometheus - Grafana - Alertmanager"]
+                kps["kube-prometheus-stack<br/>Prometheus Operator - Prometheus - Grafana"]
+                gsec["Secret: grafana-admin<br/>(from TF_VAR_*)"]
             end
         end
     end
@@ -134,7 +135,9 @@ flowchart TB
     tf -->|helm provider| kps
     tf -->|helm provider| agentd
     tf -->|kubernetes provider| sec
-    browser -->|"agent.localtest.me<br/>grafana.localtest.me"| ing
+    browser -->|"agent.localtest.me<br/>grafana.localtest.me<br/>prometheus.localtest.me"| ing
+    tf -->|kubernetes provider| gsec
+    gsec -.-> kps
     ing --> agentd
     ing --> kps
     agentd --> gwd
@@ -169,15 +172,18 @@ onchain-agent-platform/
 │   ├── agent/                 # Python - FastAPI - MCP client - OpenAI SDK
 │   └── gateway/litellm/       # LiteLLM proxy config (no code)
 ├── deploy/
-│   ├── kind/                  # cluster.yaml (port mappings for ingress)
-│   ├── helm/                  # umbrella chart: onchain-agent-platform
-│   └── observability/         # Grafana dashboards, alert rules
+│   ├── kind/                  # cluster.yaml, ingress-nginx values (hostPort)
+│   ├── helm/onchain-agent-platform/
+│   │   ├── templates/         # 3 Deployments + Services, Ingress, ConfigMap, Secret,
+│   │   │                      # ServiceMonitor, PrometheusRule, dashboard ConfigMap, test
+│   │   └── dashboards/        # Grafana dashboard JSON shipped with the chart
+│   └── observability/         # kube-prometheus-stack values
 ├── infra/terraform/
-│   ├── modules/platform/      # ingress-nginx + kube-prometheus-stack + app chart
+│   ├── modules/platform/      # ingress-nginx + kube-prometheus-stack + Secret + app chart
 │   ├── local/                 # kind cluster + platform module  (apply: yes)
 │   └── aws-eks/               # VPC + EKS + platform module     (plan only)
-├── scripts/                   # kind-load, smoke tests
-└── .github/workflows/         # lint - test - build to GHCR - helm lint - tf validate
+├── scripts/                   # kind-up/load/deploy, demo, register-claude-desktop, check-no-signing
+└── .github/workflows/ci.yml   # ruff - pytest - guard - helm - terraform - images to GHCR
 ```
 
 ## 6. MCP tool catalogue

@@ -144,8 +144,15 @@ Langfuse 자체 호스팅은 kind에 무거워 보류, Phase 5에서 Cloud 무�
 - 미실행: `use_local_images=false`(GHCR 경로) apply 검증 → Phase 6 destroy→apply 재현 테스트 때 함께
 - 클러스터 상태: Terraform 관리, monitoring 포함 전부 켜져 있음(kind 노드 메모리 ~3GB 예상)
 
-### 다음: Phase 6 — 마무리
-- README 최종 정리(문제 정의·아키텍처·ADR 링크·데모·실행법·완료 기준 체크), `docs/DEMO.md`(데모 시나리오 스크립트 + 기대 출력), ARCHITECTURE 배포 토폴로지에 monitoring 추가
-- `terraform destroy` → `terraform apply`(GHCR 이미지 경로 `use_local_images=false`) 재현 테스트로 완료 기준 1번 최종 확인
-- LEARNING.md Phase 6 회고("두 번째 시도라면 바꿀 것"), 사용자가 LEARNING만 읽고 설명 가능한지 자가 점검(완료 기준 3번)
-- 후속 과제 정리: raw 정수 필드 문자열화, Langfuse Cloud, EKS 실제 apply 여부
+### 2026-09-22 — Phase 6 완료 (마무리)
+- **재현 테스트 통과**: `terraform destroy` 2분 1초(9개 리소스, 역순 정상: 릴리스→Secret→네임스페이스→클러스터) → `terraform apply -var use_local_images=false` 11분 51초(8개 리소스: 클러스터 1m22s · ingress 1m5s · monitoring 4m58s · app 4m14s). 파드가 `ghcr.io/yunoim/onchain-agent:latest`·`onchain-mcp-server:latest` 실행 → **완료 기준 1번 최종 확인**(로컬 빌드 없이 GHCR 이미지만으로 기동)
+- 문서: README 최종본(문제 정의·산출물 표·ADR 표·실행 3경로·데모·완료 기준·레이아웃), `docs/DEMO.md`(3문 관찰 답변·포인트·트러블슈팅), ARCHITECTURE 토폴로지에 monitoring Secret·prometheus 호스트 추가, LEARNING.md Phase 6(재현 테스트·면접용 요약·다시 한다면 7가지·잘된 것)
+- 완료 기준 현황: ① apply 1회 ✅ ② 데모 3문 게이트웨이 경유 ✅(compose·kind/Helm·Terraform 클러스터 3곳) ③ LEARNING만 읽고 설명 → **사용자 자가 점검 대기**
+- 클러스터 상태: Terraform 관리, GHCR 이미지로 켜져 있음. 끄기: `terraform destroy`
+
+### 후속 과제 (선택)
+- MCP raw 정수 필드(`balance_wei`, `amount_raw`) 문자열화 — JS 클라이언트 2^53 정밀도
+- CI: `templates/` 변경 시 `Chart.yaml` version bump 강제 체크
+- Alertmanager + 웹훅 싱크, Langfuse Cloud(트레이스), 도구 스키마 축소로 프롬프트 토큰 절감
+- EKS 실제 apply(반나일 약 $4, 사용자 명시 요청 시), 로컬도 cluster/platform 루트 분리 검토
+- Claude Desktop 등록 스크립트는 Store 빌드 기준. 클래식 설치본도 fallback 경로로 처리됨(미검증)

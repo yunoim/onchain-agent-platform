@@ -2,102 +2,81 @@
 
 [![ci](https://github.com/yunoim/onchain-agent-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/yunoim/onchain-agent-platform/actions/workflows/ci.yml)
 
-> **Status: Phase 5 complete.** One `terraform apply` creates a kind cluster with
-> ingress-nginx, kube-prometheus-stack and the platform chart; the three demo questions
-> are answered at `http://agent.localtest.me` by a local model (Ollama `qwen3:8b`) at zero
-> cost, and Grafana shows tokens, cost, latency and tool metrics. CI is green and publishes
-> images to GHCR. The same platform module targets AWS EKS (validated, plan-only).
-> Phase 6 wraps up the docs and a destroy/apply reproduction test.
-> Progress is tracked in [CLAUDE.md](CLAUDE.md); the full design is in
-> [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
-
-A read-only on-chain data platform for AI agents, and the infrastructure to run
-it on Kubernetes reproducibly.
+A read-only on-chain data platform for AI agents, and the infrastructure to run it on
+Kubernetes reproducibly: one `terraform apply`, three containers, a local LLM, zero
+cloud spend.
 
 ```
-User -> AI Agent (FastAPI) -> LiteLLM Gateway -> Anthropic
+User -> Agent (FastAPI) -> LiteLLM gateway -> Ollama qwen3:8b (default) | Anthropic (optional)
              |
-             +-> MCP Server (FastMCP, read-only) -> Ethereum RPC / Etherscan
+             +-> MCP server (9 read-only Ethereum tools) -> public JSON-RPC / Etherscan
+Prometheus scrapes both services; Grafana shows tokens, cost, latency, tool calls.
 ```
 
-## What this repository demonstrates
+## The problem this solves
 
-| Area | Deliverable |
-|---|---|
-| MCP | An `MCPServer` (mcp SDK 2.x) exposing 9 read-only Ethereum tools, tested with a fake RPC, usable from Claude Desktop (stdio) and from the cluster (streamable-http) |
-| Agent | A FastAPI service that answers natural-language questions by driving those tools through a bounded tool-calling loop |
-| AI gateway | LiteLLM proxy owning model aliases, routing, fallbacks and rate limits; local Ollama by default, hosted models by adding a key; the agent never touches a provider key |
-| Kubernetes | Helm chart for the three services, ingress-nginx, `*.localtest.me` hostnames on a kind cluster |
-| Terraform | `infra/terraform/local`: one `apply` creates the kind cluster and installs everything. `infra/terraform/aws-eks`: the same platform module on EKS, plan-only by default |
-| Observability | kube-prometheus-stack via the same Terraform module; ServiceMonitors, four alert rules and a provisioned Grafana dashboard with LLM token and cost panels shipped inside the chart |
-| CI/CD | GitHub Actions: ruff, pytest, ADR-0001 guard, `helm lint` and template, `terraform validate` for both roots, image build and push to GHCR (public) |
+An LLM cannot see a blockchain. Handing it raw RPC access is dangerous (it can be talked
+into signing) and impractical (public nodes have no per-address history). This platform
+gives an agent a **tool-shaped, read-only view of Ethereum** over the Model Context
+Protocol, routes every model call through a **gateway that owns model policy and cost**,
+and deploys the whole thing with **infrastructure that can be explained line by line**.
 
-## Design principles
+It is a portfolio project for a DevOps / AI platform engineer role. The goal was not a
+product but a structure whose every decision can be defended in an interview; the
+reasoning lives in [docs/adr](docs/adr/README.md) and the concepts learned along the way
+in [docs/LEARNING.md](docs/LEARNING.md).
 
-1. **Read-only by construction.** No signing code exists anywhere in the tree.
-   [ADR-0001](docs/adr/0001-read-only-onchain-access.md)
-2. **Runs on free tiers.** Public RPC for state, a free Etherscan key for
-   history, and a local kind cluster. [ADR-0002](docs/adr/0002-two-tier-data-sources.md)
-3. **Explainable infrastructure.** Every non-obvious choice has an ADR; every
-   Kubernetes / Terraform concept used is written up in
-   [docs/LEARNING.md](docs/LEARNING.md).
+## What is here
 
-## Roadmap
-
-| Phase | Scope | Status |
+| Layer | Deliverable | Where |
 |---|---|---|
-| 0 | Repository layout, architecture, ADRs | done |
-| 1 | MCP server + tests, Claude Desktop connection | done |
-| 2 | Agent + LiteLLM, docker compose | done |
-| 3 | kind + Helm chart | done |
-| 4 | Terraform (kind), then EKS module (plan) | done |
-| 5 | Observability + CI/CD | done |
-| 6 | Final README, demo script | next |
+| MCP server | 9 read-only Ethereum tools (balances, blocks, gas, tx, ERC-20, bounded log scans, Etherscan history), stdio and streamable-http from one binary, 44 tests | [services/mcp-server](services/mcp-server/README.md) |
+| Agent | FastAPI `/ask` with a bounded tool-calling loop, token and cost accounting, `/readyz` that checks its dependencies, 12 tests | [services/agent](services/agent/README.md) |
+| AI gateway | LiteLLM proxy: model aliases, local-first routing with hosted fallback, rate limits; the agent never holds a provider key | [services/gateway/litellm/config.yaml](services/gateway/litellm/config.yaml) |
+| Local stack | `docker compose` with health-gated startup | [docker-compose.yml](docker-compose.yml) |
+| Kubernetes | One Helm chart: 3 Deployments, Ingress, ConfigMap, Secret or existingSecret, probes, non-root read-only containers, ServiceMonitors, alert rules, Grafana dashboard | [deploy/helm/onchain-agent-platform](deploy/helm/onchain-agent-platform) |
+| Terraform | Cluster layer (kind, or EKS) and a shared platform module (ingress-nginx, kube-prometheus-stack, Secret, app chart) | [infra/terraform](infra/terraform) |
+| Observability | kube-prometheus-stack, service `/metrics`, four alerts, provisioned dashboard | [deploy/observability](deploy/observability) |
+| CI/CD | ruff, pytest, read-only guard, helm lint/template, terraform validate, images to GHCR | [.github/workflows/ci.yml](.github/workflows/ci.yml) |
 
-## Quick start (local, docker compose)
+## Design decisions worth asking about
 
-Prerequisites: Docker Desktop, and [Ollama](https://ollama.com) running on the host with
-the default model pulled:
+| ADR | Decision | One-line why |
+|---|---|---|
+| [0001](docs/adr/0001-read-only-onchain-access.md) | Read-only by construction | No signing code exists; a grep in CI and in the tests keeps it that way |
+| [0002](docs/adr/0002-two-tier-data-sources.md) | RPC for state, Etherscan for history | Public nodes have no address index; history degrades to a clear error without a key |
+| [0003](docs/adr/0003-mcp-dual-transport.md) | One MCP server, two transports | Claude Desktop wants stdio; the cluster wants HTTP; one codebase serves both |
+| [0004](docs/adr/0004-litellm-gateway.md) | All LLM calls through LiteLLM | Routing, fallbacks, limits and keys live in one place, not in every service |
+| [0005](docs/adr/0005-terraform-layering.md) | Cluster layer / platform module split | The platform is the deployable unit; kind and EKS are interchangeable substrates |
+| [0006](docs/adr/0006-image-delivery.md) | GHCR images, `kind load` locally | kind cannot see host images; CI publishes, local dev stays fast |
+| [0007](docs/adr/0007-local-first-model-routing.md) | Ollama by default, hosted models optional | Zero-cost, offline demo; one env var switches to a hosted model |
+
+## Run it
+
+### Quickest: docker compose
+
+Prerequisites: Docker Desktop, and [Ollama](https://ollama.com) on the host with the
+default model:
 
 ```powershell
 ollama pull qwen3:8b
 ```
 
-Start the stack (no API keys needed; copy `.env.example` to `.env` only if you want
-Etherscan history tools or a hosted model):
-
 ```powershell
 docker compose up --build -d
 ```
-
-Ask the three demo questions:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\demo.ps1
 ```
 
-Or one question by hand:
+No API keys needed. Copy `.env.example` to `.env` only for Etherscan history tools or a
+hosted model. Stop with `docker compose down`.
 
-```powershell
-Invoke-RestMethod -Uri http://localhost:8080/ask -Method Post -ContentType "application/json" -Body '{"question":"What is the ETH balance of vitalik.eth?"}'
-```
+### Kubernetes by hand: kind + Helm
 
-| Service | URL |
-|---|---|
-| Agent | http://localhost:8080 (`/ask`, `/tools`, `/readyz`, `/metrics`, `/docs`) |
-| LiteLLM gateway | http://localhost:4000 (OpenAI-compatible, key `LITELLM_MASTER_KEY`) |
-| MCP server | http://localhost:8000 (`/mcp`, `/healthz`, `/metrics`) |
-
-Stop everything:
-
-```powershell
-docker compose down
-```
-
-## Kubernetes (local kind cluster + Helm)
-
-Prerequisites: the above plus `kind`, `kubectl`, `helm`. Stop the compose stack first if it
-is running (`docker compose down`); the cluster binds host ports 80 and 443.
+Prerequisites: the above plus `kind`, `kubectl`, `helm`. Stop the compose stack first; the
+cluster binds host ports 80 and 443.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\kind-up.ps1
@@ -111,32 +90,13 @@ powershell -ExecutionPolicy Bypass -File .\scripts\kind-load.ps1
 powershell -ExecutionPolicy Bypass -File .\scripts\kind-deploy.ps1
 ```
 
-The three scripts create the cluster and install ingress-nginx, build and load the two
-service images, and install the chart in `deploy/helm/onchain-agent-platform` as release
-`oap` in namespace `onchain`. Then:
+Then http://agent.localtest.me/docs (`*.localtest.me` resolves to 127.0.0.1). Tear down
+with `kind delete cluster --name onchain-agent`.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\demo.ps1 -AgentUrl http://agent.localtest.me
-```
+### One command: Terraform
 
-```powershell
-helm -n onchain test oap
-```
-
-`*.localtest.me` resolves to 127.0.0.1, so `http://agent.localtest.me/docs`,
-`http://litellm.localtest.me/health/liveliness` and `http://mcp.localtest.me/healthz` work
-without editing a hosts file. Tear down with:
-
-```powershell
-kind delete cluster --name onchain-agent
-```
-
-## One command: Terraform (kind cluster + everything on it)
-
-Prerequisites: Docker Desktop, Ollama with `qwen3:8b`, `kind`, `terraform`, and the two
-service images built locally (`docker compose build` or `scripts/kind-load.ps1` builds
-them; Terraform loads them into the cluster). Remove any manually created cluster first
-(`kind delete cluster --name onchain-agent`).
+Prerequisites: Docker Desktop, Ollama with `qwen3:8b`, `kind`, `terraform`. No manually
+created cluster may exist (`kind delete cluster --name onchain-agent`).
 
 ```powershell
 cd infra\terraform\local
@@ -147,49 +107,78 @@ terraform init
 ```
 
 ```powershell
-terraform apply
+terraform apply -var use_local_images=false
 ```
 
-One apply creates the kind cluster, installs ingress-nginx, writes the platform Secret
-from `TF_VAR_*` variables (all have local defaults), and installs the application chart.
-Then `http://agent.localtest.me/readyz` should report ready. Optional secrets:
+One apply creates the kind cluster, installs ingress-nginx and kube-prometheus-stack,
+writes the platform Secret, and installs the application chart pulling the public GHCR
+images. About ten minutes on a laptop; then:
+
+| Service | URL |
+|---|---|
+| Agent | http://agent.localtest.me (`/ask`, `/tools`, `/readyz`, `/metrics`, `/docs`) |
+| Grafana | http://grafana.localtest.me (admin / `TF_VAR_grafana_admin_password`, default `admin`) |
+| Prometheus | http://prometheus.localtest.me |
+
+Omit `-var use_local_images=false` to use images you built locally (Terraform loads them
+into the node). Optional variables via environment, never via committed tfvars:
 
 ```powershell
 $env:TF_VAR_etherscan_api_key = "..."
 ```
 
-Tear everything down, cluster included:
+Everything, cluster included, goes away with:
 
 ```powershell
 terraform destroy
 ```
 
-### Observability
+The AWS variant in [infra/terraform/aws-eks](infra/terraform/aws-eks/README.md) reuses the
+platform module behind an NLB. It is validated in CI and planned by hand; it is never
+applied automatically. Read its cost note (about $0.30 per hour) first.
 
-The same apply installs kube-prometheus-stack (`monitoring_enabled = true` by default).
-The chart ships ServiceMonitors for the agent and the MCP server, a PrometheusRule with
-four alerts, and a Grafana dashboard provisioned through the sidecar.
+## Demo
 
-| UI | URL | Login |
-|---|---|---|
-| Grafana | http://grafana.localtest.me | `admin` / `TF_VAR_grafana_admin_password` (default `admin`) |
-| Prometheus | http://prometheus.localtest.me | none |
+[docs/DEMO.md](docs/DEMO.md) walks through three questions with observed answers, what to
+point at while each runs, and what to show in Grafana:
 
-Dashboard "onchain-agent-platform": requests and latency, tokens and estimated cost per
-model, LLM round-trips per question, tool calls, MCP tool latency and error ratio.
-Set `-var monitoring_enabled=false` on a machine with less than 8 GB for Docker.
+1. What is the ETH balance of vitalik.eth right now?
+2. Find USDC transfers above 1,000,000 USDC in the last 300 blocks and list the three largest.
+3. What is the current gas price in gwei and the latest block number?
 
-### CI
+All three answer through the gateway with the local model at $0.00; typical wall time is
+20 to 70 seconds per question on an 8 GB laptop GPU.
 
-Every push runs ruff and pytest for both services, the ADR-0001 read-only guard,
-`helm lint` and template rendering (with and without the Prometheus Operator CRDs),
-`terraform fmt -check` and `validate` for both roots, and on `main` builds and pushes
-`ghcr.io/yunoim/onchain-mcp-server` and `ghcr.io/yunoim/onchain-agent` tagged with the
-short SHA and `latest`. See [.github/workflows/ci.yml](.github/workflows/ci.yml).
+## Completion criteria
 
-The AWS variant lives in [infra/terraform/aws-eks](infra/terraform/aws-eks/README.md). It
-shares the same platform module and is validated in CI but never applied automatically:
-read its cost note first.
+| Criterion | Status |
+|---|---|
+| A fresh machine runs `terraform apply` once and the full stack is up on a local cluster | Verified: destroy then apply with GHCR images, see [LEARNING.md](docs/LEARNING.md#phase-6-wrap-up) |
+| At least three demo questions answer through the gateway | Verified on compose, on kind via Helm, and on the Terraform-built cluster |
+| The author can explain the Kubernetes, Terraform and Helm structure from [docs/LEARNING.md](docs/LEARNING.md) alone | Self-assessed after Phase 6 |
+
+## Repository layout
+
+```
+services/
+  mcp-server/          Python, mcp SDK 2.x, web3.py 8, uv, pytest, Dockerfile
+  agent/               Python, FastAPI, openai SDK, mcp client, uv, pytest, Dockerfile
+  gateway/litellm/     config.yaml (canonical; injected into compose and the chart)
+deploy/
+  kind/                cluster.yaml, ingress-nginx values for hostPort
+  helm/onchain-agent-platform/   chart, values-local.yaml, dashboards/
+  observability/       kube-prometheus-stack values
+infra/terraform/
+  modules/platform/    ingress-nginx, monitoring, Secret, app chart
+  local/               kind cluster + platform (apply: yes)
+  aws-eks/             VPC + EKS + platform (plan-only)
+scripts/               kind-up/load/deploy, demo, register-claude-desktop, check-no-signing
+docs/                  ARCHITECTURE.md, LEARNING.md, DEMO.md, adr/
+```
+
+## What I would do differently
+
+See the retrospective at the end of [docs/LEARNING.md](docs/LEARNING.md#phase-6-wrap-up).
 
 ## License
 
