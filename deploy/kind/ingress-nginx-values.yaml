@@ -1,0 +1,27 @@
+# ingress-nginx values for kind (chart: ingress-nginx/ingress-nginx).
+#
+# On a cloud cluster the controller sits behind a LoadBalancer Service. kind has no load
+# balancer, so the controller binds host ports 80/443 on the node that cluster.yaml maps
+# to the host. Same chart, different values: that is the whole point of Helm values.
+controller:
+  hostPort:
+    enabled: true
+  service:
+    type: NodePort          # no cloud LB in kind; traffic arrives via hostPort anyway
+  nodeSelector:
+    ingress-ready: "true"   # label set in deploy/kind/cluster.yaml
+  tolerations:              # allow scheduling on the control-plane node
+    - key: node-role.kubernetes.io/control-plane
+      operator: Equal
+      effect: NoSchedule
+  publishService:
+    enabled: false          # nothing to publish without a LB; keeps status fields honest
+  watchIngressWithoutClass: false
+  ingressClassResource:
+    default: true           # Ingress objects without ingressClassName still get served
+  admissionWebhooks:
+    enabled: false          # one fewer Job/cert dance on a throwaway local cluster
+  resources:
+    requests:
+      cpu: 50m
+      memory: 90Mi

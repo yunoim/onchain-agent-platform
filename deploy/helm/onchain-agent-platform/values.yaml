@@ -1,0 +1,124 @@
+# Default values: pull published images from GHCR (ADR-0006).
+# For a local kind cluster with `kind load`-ed images, add -f values-local.yaml.
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+
+# One Secret feeds all three services. Either let the chart create it from `values`
+# (fine for local), or point `existingSecret` at one created out-of-band (Terraform in
+# Phase 4, External Secrets in a real cluster) and leave `create: false`.
+secrets:
+  create: true
+  existingSecret: ""
+  values:
+    LITELLM_MASTER_KEY: sk-local-dev-change-me
+    ETHERSCAN_API_KEY: ""
+    ANTHROPIC_API_KEY: ""
+
+# Where Ollama lives, as seen from pods. On Docker Desktop kind nodes resolve
+# host.docker.internal to the host; on Linux use the node's gateway IP or an in-cluster
+# Ollama Service.
+ollama:
+  baseUrl: http://host.docker.internal:11434
+
+mcpServer:
+  image:
+    repository: ghcr.io/yunoim/onchain-mcp-server
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  service:
+    port: 8000
+  env:
+    ETH_RPC_URL: https://ethereum-rpc.publicnode.com
+    MAX_LOG_BLOCK_RANGE: "2000"
+    LOG_LEVEL: INFO
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+
+litellm:
+  image:
+    repository: ghcr.io/berriai/litellm
+    tag: main-stable
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  service:
+    port: 4000
+  env:
+    LITELLM_LOG: INFO
+  # Full proxy config. The repository's canonical file is
+  # services/gateway/litellm/config.yaml; inject it with
+  #   --set-file litellm.config=services/gateway/litellm/config.yaml
+  # This default is the smallest config that works (local model only).
+  config: |
+    model_list:
+      - model_name: local-default
+        litellm_params:
+          model: ollama_chat/qwen3:8b
+          api_base: os.environ/OLLAMA_BASE_URL
+          num_ctx: 12288
+          temperature: 0.1
+        model_info:
+          input_cost_per_token: 0
+          output_cost_per_token: 0
+    litellm_settings:
+      drop_params: true
+      json_logs: true
+    general_settings:
+      master_key: os.environ/LITELLM_MASTER_KEY
+  resources:
+    requests:
+      cpu: 100m
+      memory: 384Mi
+    limits:
+      memory: 1Gi
+
+agent:
+  image:
+    repository: ghcr.io/yunoim/onchain-agent
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  service:
+    port: 8080
+  env:
+    LLM_MODEL: local-default
+    MAX_TOOL_ITERATIONS: "8"
+    LOG_LEVEL: INFO
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    # Local models answer slowly; do not let nginx cut the request at its 60 s default.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+  hosts:
+    agent: agent.localtest.me
+    litellm: litellm.localtest.me
+    mcpServer: mcp.localtest.me
+  # The agent is the product surface. The gateway and MCP server are internal by default;
+  # flip these on when you want to poke them from the host.
+  exposeLitellm: false
+  exposeMcpServer: false
+  tls: []
+
+# Pod annotations picked up by the Phase 5 Prometheus scrape config.
+metrics:
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/path: /metrics

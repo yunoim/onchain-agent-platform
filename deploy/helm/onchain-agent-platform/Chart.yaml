@@ -1,0 +1,14 @@
+apiVersion: v2
+name: onchain-agent-platform
+description: Read-only on-chain data platform for AI agents - MCP server, LiteLLM gateway, FastAPI agent
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/yunoim/onchain-agent-platform
+sources:
+  - https://github.com/yunoim/onchain-agent-platform
+keywords:
+  - mcp
+  - ethereum
+  - litellm
+  - ai-agent

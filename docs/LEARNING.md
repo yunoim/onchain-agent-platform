@@ -236,10 +236,93 @@ why it took one log read to find.
 
 ## Phase 3: kind + Helm
 
-_(pending: Pod, Deployment, Service, Ingress, ConfigMap, Secret, probes,
-resource requests/limits; Helm chart anatomy, values precedence, `helm
-template` as a debugging tool; kind extraPortMappings and why ingress-nginx
-needs hostPort on kind.)_
+### The five objects that carry the whole app
+
+- **Deployment**: "keep N copies of this pod template running, roll them when the template
+  changes." Ours have `replicas: 1`; the value of the Deployment is not scale but the
+  controller loop: it recreates a crashed pod and rolls a new image without downtime.
+- **Pod**: one or more containers sharing a network namespace. We never write Pods by
+  hand; the Deployment stamps them from `spec.template`.
+- **Service**: a stable DNS name and virtual IP in front of pods selected by labels.
+  `http://oap-onchain-agent-platform-litellm:4000` works from any pod because the Service
+  exists, even while the pod behind it is replaced.
+- **ConfigMap / Secret**: configuration mounted as files (LiteLLM's `config.yaml`) or
+  injected as env vars (`ETHERSCAN_API_KEY`). Same shape; Secret is base64 and can be
+  RBAC-restricted and encrypted at rest. Neither is "secure" by itself.
+- **Ingress**: an L7 routing rule ("host `agent.localtest.me` -> Service `agent`") that
+  does nothing until an ingress *controller* (ingress-nginx) implements it.
+- **Where**: `deploy/helm/onchain-agent-platform/templates/*.yaml`.
+
+### Why Helm, and how a chart is put together
+
+- **Concept**: Helm is a templating engine plus a release database. Templates under
+  `templates/` are Go templates rendered with `values.yaml` (overridden by `-f` files
+  and `--set`, later wins). The rendered YAML is applied and recorded as a release
+  revision, which is what makes `helm rollback` and `helm diff` possible.
+- **Where**: `Chart.yaml` (metadata), `values.yaml` (defaults for GHCR images),
+  `values-local.yaml` (kind overrides), `templates/_helpers.tpl` (named templates for
+  labels and names used by every object), `templates/NOTES.txt` (printed after install),
+  `templates/tests/` (pods run by `helm test`).
+- **Design choices in this chart**:
+  - One chart, three components, selected by `app.kubernetes.io/component`. Selector
+    labels are immutable on a Deployment, so the selector set is deliberately tiny.
+  - `checksum/config` annotations on pod templates. Helm does not restart pods when a
+    ConfigMap changes; hashing the content into the template makes a config change a
+    template change, which triggers a rollout.
+  - `secrets.existingSecret`: the chart can create the Secret (local) or reference one
+    created elsewhere (Terraform in Phase 4). Charts should not own secrets in
+    production.
+  - LiteLLM config is injected with `--set-file`, so the canonical file in
+    `services/gateway/litellm/` is the only copy. The chart default is a minimal config
+    that still works, so `helm install` with no flags is not broken.
+- **Debugging tools**: `helm template` renders without a cluster (used above to count
+  eleven objects); `helm lint` catches schema mistakes; `helm get manifest <release>`
+  shows exactly what was applied.
+
+### Probes and resources: what the scheduler and the controller need from you
+
+- **Liveness** ("restart me if this fails") vs **readiness** ("do not send traffic until
+  this passes"). The agent's readiness probe is `/readyz`, which checks the MCP server
+  and the gateway, so the Ingress only routes to an agent pod that can actually answer.
+  Liveness is the cheap `/healthz`; a slow upstream must not get the agent killed.
+- **Requests vs limits**: requests are what the scheduler reserves; limits are what the
+  kernel enforces (memory: OOM-kill; CPU: throttle). We set memory limits but no CPU
+  limits, a common recommendation, because CPU throttling hurts latency more than it
+  protects neighbours on a small cluster.
+- **Security context**: `runAsNonRoot`, `readOnlyRootFilesystem`, drop all capabilities
+  for the images we build (uid 10001 baked in the Dockerfile). The upstream LiteLLM image
+  is left alone: hardening a third-party image is its maintainers' contract to define.
+
+### kind: a cluster made of Docker containers
+
+- **Concept**: each kind "node" is a Docker container running containerd and kubelet.
+  This is why `docker build` images are invisible to the cluster (different image store)
+  and `kind load docker-image` exists (ADR-0006).
+- **Ingress on kind**: no cloud load balancer, so `deploy/kind/cluster.yaml` maps node
+  ports 80/443 to the host and ingress-nginx is installed with `hostPort` enabled and a
+  `nodeSelector` on the labelled node. `*.localtest.me` resolves to 127.0.0.1, so
+  `http://agent.localtest.me` reaches the controller with no hosts-file edits.
+- **Same chart, different values**: the ingress-nginx chart is the one used on EKS; only
+  `deploy/kind/ingress-nginx-values.yaml` differs (hostPort vs LoadBalancer). This is the
+  pattern the platform Terraform module reuses in Phase 4.
+- **Reaching the host from a pod**: on Docker Desktop, kind nodes inherit the embedded DNS,
+  so pods resolve `host.docker.internal` and the gateway reaches Ollama on the host GPU
+  with no extra objects. Verified with a throwaway busybox pod before writing any values.
+- **Gotcha, `kind load` and multi-platform images**: loading the upstream LiteLLM image
+  failed with `content digest ... not found`. The host store holds only the amd64 layers
+  of a multi-arch manifest, and `ctr import --all-platforms` asks for the rest. Let kubelet
+  pull third-party images; only load the ones you build.
+- **Gotcha, tool output formats change**: `helm test` on Helm v4 prints a different report
+  than v3, so a grep written for v3 returned nothing and looked like a hang. The test pod
+  had already passed and been garbage-collected by `hook-succeeded`. Check the release
+  status before assuming failure.
+
+### Measured on kind (same laptop, same model)
+
+Demo answers through Ingress took 60 s, 52 s and 39 s, roughly 1.5x to 3x slower than
+docker compose. The extra time is not Kubernetes; it is GPU contention from the LiteLLM
+image pull and cluster bring-up finishing in the background on an 8 GB Docker VM. Worth
+knowing before blaming the platform layer for latency.
 
 ## Phase 4: Terraform
 

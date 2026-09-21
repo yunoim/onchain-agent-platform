@@ -1,0 +1,82 @@
+{{- $name := include "oap.componentName" (dict "root" . "component" "mcp-server") -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "oap.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mcp-server
+spec:
+  replicas: {{ .Values.mcpServer.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "oap.selectorLabels" (dict "root" . "component" "mcp-server") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "oap.selectorLabels" (dict "root" . "component" "mcp-server") | nindent 8 }}
+      annotations:
+        {{- toYaml .Values.metrics.annotations | nindent 8 }}
+        prometheus.io/port: {{ .Values.mcpServer.service.port | quote }}
+        # Roll the pods when the Secret content changes (Helm does not do this by itself).
+        checksum/secret: {{ toJson .Values.secrets.values | sha256sum | trunc 16 }}
+    spec:
+      serviceAccountName: {{ include "oap.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "oap.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: mcp-server
+          image: "{{ .Values.mcpServer.image.repository }}:{{ .Values.mcpServer.image.tag }}"
+          imagePullPolicy: {{ .Values.mcpServer.image.pullPolicy }}
+          # The image ENTRYPOINT already selects streamable-http; host/port come from env.
+          securityContext:
+            {{- include "oap.containerSecurityContext" . | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.mcpServer.service.port }}
+          env:
+            - name: MCP_HOST
+              value: "0.0.0.0"
+            - name: MCP_PORT
+              value: {{ .Values.mcpServer.service.port | quote }}
+            {{- range $key, $value := .Values.mcpServer.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+            - name: ETHERSCAN_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "oap.secretName" . }}
+                  key: ETHERSCAN_API_KEY
+                  optional: true
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.mcpServer.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "oap.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mcp-server
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "oap.selectorLabels" (dict "root" . "component" "mcp-server") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.mcpServer.service.port }}
+      targetPort: http

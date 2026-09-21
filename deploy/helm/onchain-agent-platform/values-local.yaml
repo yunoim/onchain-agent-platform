@@ -1,0 +1,18 @@
+# Overrides for a local kind cluster whose images were loaded with scripts/kind-load.
+# `pullPolicy: Never` makes a missing image a loud scheduling error instead of a silent
+# attempt to pull a tag that only exists on this machine.
+mcpServer:
+  image:
+    repository: onchain-mcp-server
+    tag: dev
+    pullPolicy: Never
+
+agent:
+  image:
+    repository: onchain-agent
+    tag: dev
+    pullPolicy: Never
+
+ingress:
+  exposeLitellm: true
+  exposeMcpServer: true

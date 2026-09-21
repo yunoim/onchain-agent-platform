@@ -1,0 +1,25 @@
+# `helm test <release>` runs this pod once: it must reach the agent's readiness endpoint
+# through the Service, which proves Service -> Pod wiring and that the agent can see the
+# MCP server and the gateway.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "oap.fullname" . }}-test-connection
+  labels:
+    {{- include "oap.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  containers:
+    - name: readyz
+      image: busybox:1.36
+      command:
+        - sh
+        - -c
+        - |
+          set -e
+          url="http://{{ include "oap.componentName" (dict "root" . "component" "agent") }}:{{ .Values.agent.service.port }}/readyz"
+          echo "GET $url"
+          wget -qO- -T 10 "$url"

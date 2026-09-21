@@ -1,0 +1,84 @@
+{{- $name := include "oap.componentName" (dict "root" . "component" "litellm") -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "oap.labels" . | nindent 4 }}
+    app.kubernetes.io/component: litellm
+spec:
+  replicas: {{ .Values.litellm.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "oap.selectorLabels" (dict "root" . "component" "litellm") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "oap.selectorLabels" (dict "root" . "component" "litellm") | nindent 8 }}
+      annotations:
+        # Restart the proxy when its config or the Secret changes.
+        checksum/config: {{ .Values.litellm.config | sha256sum | trunc 16 }}
+        checksum/secret: {{ toJson .Values.secrets.values | sha256sum | trunc 16 }}
+    spec:
+      serviceAccountName: {{ include "oap.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      containers:
+        - name: litellm
+          image: "{{ .Values.litellm.image.repository }}:{{ .Values.litellm.image.tag }}"
+          imagePullPolicy: {{ .Values.litellm.image.pullPolicy }}
+          args: ["--config", "/etc/litellm/config.yaml", "--port", {{ .Values.litellm.service.port | quote }}, "--host", "0.0.0.0"]
+          ports:
+            - name: http
+              containerPort: {{ .Values.litellm.service.port }}
+          env:
+            - name: OLLAMA_BASE_URL
+              value: {{ .Values.ollama.baseUrl | quote }}
+            {{- range $key, $value := .Values.litellm.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+          # Provider keys and the master key exist only in this pod (ADR-0004).
+          envFrom:
+            - secretRef:
+                name: {{ include "oap.secretName" . }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/litellm
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /health/liveliness
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /health/readiness
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 12
+          resources:
+            {{- toYaml .Values.litellm.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ $name }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "oap.labels" . | nindent 4 }}
+    app.kubernetes.io/component: litellm
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "oap.selectorLabels" (dict "root" . "component" "litellm") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.litellm.service.port }}
+      targetPort: http

@@ -1,8 +1,9 @@
 # onchain-agent-platform
 
-> **Status: Phase 2 complete.** `docker compose up` runs the MCP server, the LiteLLM
-> gateway and the agent; all three demo questions are answered end-to-end by a local
-> model (Ollama `qwen3:8b`) at zero cost. Kubernetes and Terraform follow in Phases 3-4.
+> **Status: Phase 3 complete.** The stack runs on a local kind cluster behind
+> ingress-nginx (`http://agent.localtest.me`) from a single Helm chart, and via
+> `docker compose` for the quickest start. All three demo questions are answered
+> end-to-end by a local model (Ollama `qwen3:8b`) at zero cost. Terraform follows in Phase 4.
 > Progress is tracked in [CLAUDE.md](CLAUDE.md); the full design is in
 > [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -44,8 +45,8 @@ User -> AI Agent (FastAPI) -> LiteLLM Gateway -> Anthropic
 | 0 | Repository layout, architecture, ADRs | done |
 | 1 | MCP server + tests, Claude Desktop connection | done |
 | 2 | Agent + LiteLLM, docker compose | done |
-| 3 | kind + Helm chart | next |
-| 4 | Terraform (kind), then EKS module (plan) | |
+| 3 | kind + Helm chart | done |
+| 4 | Terraform (kind), then EKS module (plan) | next |
 | 5 | Observability + CI/CD | |
 | 6 | Final README, demo script | |
 
@@ -89,7 +90,44 @@ Stop everything:
 docker compose down
 ```
 
-`terraform apply` for the Kubernetes version arrives in Phase 4.
+## Kubernetes (local kind cluster + Helm)
+
+Prerequisites: the above plus `kind`, `kubectl`, `helm`. Stop the compose stack first if it
+is running (`docker compose down`); the cluster binds host ports 80 and 443.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\kind-up.ps1
+```
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\kind-load.ps1
+```
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\kind-deploy.ps1
+```
+
+The three scripts create the cluster and install ingress-nginx, build and load the two
+service images, and install the chart in `deploy/helm/onchain-agent-platform` as release
+`oap` in namespace `onchain`. Then:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\demo.ps1 -AgentUrl http://agent.localtest.me
+```
+
+```powershell
+helm -n onchain test oap
+```
+
+`*.localtest.me` resolves to 127.0.0.1, so `http://agent.localtest.me/docs`,
+`http://litellm.localtest.me/health/liveliness` and `http://mcp.localtest.me/healthz` work
+without editing a hosts file. Tear down with:
+
+```powershell
+kind delete cluster --name onchain-agent
+```
+
+`terraform apply` that does all of the above in one step arrives in Phase 4.
 
 ## License
 

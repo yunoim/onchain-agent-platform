@@ -1,0 +1,29 @@
+{{ .Chart.Name }} {{ .Chart.Version }} installed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+Components:
+  agent       -> {{ include "oap.componentName" (dict "root" . "component" "agent") }}:{{ .Values.agent.service.port }}
+  litellm     -> {{ include "oap.componentName" (dict "root" . "component" "litellm") }}:{{ .Values.litellm.service.port }}
+  mcp-server  -> {{ include "oap.componentName" (dict "root" . "component" "mcp-server") }}:{{ .Values.mcpServer.service.port }}
+  secret      -> {{ include "oap.secretName" . }}{{ if .Values.secrets.existingSecret }} (existing){{ else }} (chart-managed){{ end }}
+  ollama      -> {{ .Values.ollama.baseUrl }} (must be running outside the cluster)
+
+{{- if .Values.ingress.enabled }}
+
+Endpoints via ingress class "{{ .Values.ingress.className }}":
+  http://{{ .Values.ingress.hosts.agent }}/docs
+  http://{{ .Values.ingress.hosts.agent }}/readyz
+{{- if .Values.ingress.exposeLitellm }}
+  http://{{ .Values.ingress.hosts.litellm }}/health/liveliness
+{{- end }}
+{{- if .Values.ingress.exposeMcpServer }}
+  http://{{ .Values.ingress.hosts.mcpServer }}/healthz
+{{- end }}
+{{- end }}
+
+Check:
+  kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+  helm -n {{ .Release.Namespace }} test {{ .Release.Name }}
+
+Ask a question:
+  curl -s http://{{ .Values.ingress.hosts.agent }}/ask -H 'Content-Type: application/json' \
+    -d '{"question": "What is the ETH balance of vitalik.eth?"}'

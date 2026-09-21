@@ -1,0 +1,23 @@
+# kind cluster for local development.
+#
+#   kind create cluster --config deploy/kind/cluster.yaml
+#
+# One control-plane node is enough for three small Deployments. The two extraPortMappings
+# expose the node's ports 80/443 on the host so ingress-nginx (running with hostPort on
+# this node) answers http://agent.localtest.me directly, without port-forwarding.
+# *.localtest.me is a public DNS name that always resolves to 127.0.0.1.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: onchain-agent
+nodes:
+  - role: control-plane
+    # ingress-nginx's kind values select this node for the controller pod.
+    labels:
+      ingress-ready: "true"
+    extraPortMappings:
+      - containerPort: 80
+        hostPort: 80
+        protocol: TCP
+      - containerPort: 443
+        hostPort: 443
+        protocol: TCP

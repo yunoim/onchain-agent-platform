@@ -112,8 +112,21 @@ Langfuse 자체 호스팅은 kind에 무거워 보류, Phase 5에서 Cloud 무�
 - `scripts/demo.ps1|.sh`: 데모 3문 실행기
 - 한계: 8B 모델은 요약 문구가 부정확할 수 있음(②에서 "3건 발견"이라 했지만 실제는 매칭 다수 중 상위 3건). 답변 정확성 자체는 도구 결과에 근거
 
-### 다음: Phase 3 — kind + Helm
-- 선행: `winget install Kubernetes.kind` (terraform은 Phase 4)
-- `deploy/kind/cluster.yaml`(extraPortMappings 80/443), ingress-nginx, `deploy/helm/onchain-agent-platform/` 단일 차트(3 Deployment + Service + Ingress + ConfigMap(litellm) + Secret 참조), `values.yaml`(GHCR) / `values-local.yaml`(로컬 이미지, pullPolicy Never), `scripts/kind-load.ps1|.sh`
-- Ollama는 호스트: 클러스터에서 `host.docker.internal:11434`(kind 노드 = Docker Desktop 컨테이너라 동일하게 해석되는지 확인 필요)
-- 검증: `agent.localtest.me/ask`로 데모 3문
+### 2026-09-21 — Phase 3 완료 (kind + Helm)
+- 툴 버전: kind 0.33(노드 이미지 kindest/node v1.37.0), **helm v4.2.1**, kubectl 1.34. Docker Desktop VM 메모리 8GB → compose 스택은 내리고 진행
+- `deploy/kind/cluster.yaml`: 컨트롤플레인 1노드, 80/443 extraPortMappings, `ingress-ready=true` 라벨. `deploy/kind/ingress-nginx-values.yaml`: hostPort·NodePort·nodeSelector·admission webhook off. ingress-nginx 차트 4.15.1
+- `deploy/helm/onchain-agent-platform/`: 객체 11개(SA, Secret, ConfigMap, Deployment×3, Service×3, Ingress, test Pod). `_helpers.tpl`에 라벨·이름·securityContext 공통화. checksum 애노테이션으로 config/secret 변경 시 롤아웃. `secrets.existingSecret`로 Phase 4 Terraform Secret 연결 준비. LiteLLM 설정은 `--set-file litellm.config=services/gateway/litellm/config.yaml`로 주입(복제 없음), 차트 기본값은 최소 설정
+- 우리 이미지 컨테이너: runAsNonRoot 10001, readOnlyRootFilesystem, cap drop ALL — 문제 없이 동작
+- `scripts/kind-up|kind-load|kind-deploy` (.ps1/.sh). release `oap`, namespace `onchain`
+- **호스트 Ollama 접근 확인**: kind 파드에서 `host.docker.internal:11434` 해석·응답 OK (Docker Desktop 임베디드 DNS)
+- **검증 완료**: 3 파드 1/1, `agent.localtest.me/readyz`·`litellm.localtest.me`·`mcp.localtest.me` 모두 Ingress 경유 응답, `helm test oap` Succeeded, **데모 3문 Ingress 경유 성공**(60초/52초/39초, 비용 $0)
+- ⚠️ 삽질: `kind load docker-image ghcr.io/berriai/litellm:main-stable` 실패("content digest not found", 멀티플랫폼 매니페스트) → LiteLLM은 kubelet pull에 맡김(약 3분). 스크립트에서 제거
+- ⚠️ helm v4 `helm test` 출력 형식이 v3와 달라 grep 필터가 빈 결과를 냈음(실제는 성공). 필터 없이 확인할 것
+- 클러스터는 현재 켜져 있음. 삭제: `kind delete cluster --name onchain-agent`
+
+### 다음: Phase 4 — Terraform
+- 선행: `winget install HashiCorp.Terraform`
+- `infra/terraform/modules/platform/`: `helm_release` ingress-nginx + `helm_release` onchain-agent-platform(values-local 또는 GHCR) + `kubernetes_secret`(TF_VAR로 주입, `secrets.create=false`·`existingSecret`) + kube-prometheus-stack은 Phase 5에서 추가
+- `infra/terraform/local/`: `kind_cluster`(tehcyx/kind provider) → provider kubernetes/helm를 kind 출력(kubeconfig)으로 구성 → `module "platform"`. `terraform apply` 1회로 완료 기준 1번 충족 목표. 기존 kind 클러스터와 충돌하므로 apply 전에 `kind delete cluster`
+- `infra/terraform/aws-eks/`: terraform-aws-modules vpc+eks + `module "platform"`, `terraform validate`/`plan`까지만. 비용·destroy 안내 문서화
+- 이미지: local 루트는 `kind load` 선행(스크립트 재사용) 또는 `null_resource`로 자동화 검토

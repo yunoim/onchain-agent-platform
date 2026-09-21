@@ -1,0 +1,92 @@
+{{- $name := include "oap.componentName" (dict "root" . "component" "agent") -}}
+{{- $litellm := include "oap.componentName" (dict "root" . "component" "litellm") -}}
+{{- $mcp := include "oap.componentName" (dict "root" . "component" "mcp-server") -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "oap.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agent
+spec:
+  replicas: {{ .Values.agent.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "oap.selectorLabels" (dict "root" . "component" "agent") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "oap.selectorLabels" (dict "root" . "component" "agent") | nindent 8 }}
+      annotations:
+        {{- toYaml .Values.metrics.annotations | nindent 8 }}
+        prometheus.io/port: {{ .Values.agent.service.port | quote }}
+        checksum/secret: {{ toJson .Values.secrets.values | sha256sum | trunc 16 }}
+    spec:
+      serviceAccountName: {{ include "oap.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "oap.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: agent
+          image: "{{ .Values.agent.image.repository }}:{{ .Values.agent.image.tag }}"
+          imagePullPolicy: {{ .Values.agent.image.pullPolicy }}
+          securityContext:
+            {{- include "oap.containerSecurityContext" . | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.agent.service.port }}
+          env:
+            - name: AGENT_HOST
+              value: "0.0.0.0"
+            - name: AGENT_PORT
+              value: {{ .Values.agent.service.port | quote }}
+            # In-cluster DNS names of the sibling Services.
+            - name: LLM_BASE_URL
+              value: "http://{{ $litellm }}:{{ .Values.litellm.service.port }}"
+            - name: MCP_SERVER_URL
+              value: "http://{{ $mcp }}:{{ .Values.mcpServer.service.port }}/mcp"
+            {{- range $key, $value := .Values.agent.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+            # The agent authenticates to the gateway with the master key; it never sees
+            # provider keys.
+            - name: LLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "oap.secretName" . }}
+                  key: LITELLM_MASTER_KEY
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          # Ready only when the MCP server and the gateway answer; the Ingress routes
+          # traffic to this pod only once that is true.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 8
+            failureThreshold: 12
+          resources:
+            {{- toYaml .Values.agent.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "oap.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agent
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "oap.selectorLabels" (dict "root" . "component" "agent") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.agent.service.port }}
+      targetPort: http
