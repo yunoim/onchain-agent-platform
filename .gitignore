@@ -47,3 +47,6 @@ node_modules/
 
 # Local run logs
 *.log
+
+# kubeconfig written by the kind Terraform provider next to the root module
+infra/terraform/local/*-config
