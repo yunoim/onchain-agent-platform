@@ -127,6 +127,24 @@ Format for each entry:
 - **Trade-off**: grep-based, so a determined author could evade it. The point is to
   make accidental scope creep fail loudly, not to stop a malicious insider.
 
+### Two gotchas from connecting Claude Desktop
+
+- **MSIX filesystem virtualisation**: the Microsoft Store build of Claude Desktop sees
+  `%APPDATA%\Claude` but a normal shell does not; the real file is under
+  `%LOCALAPPDATA%\Packages\Claude_*\LocalCache\Roaming\Claude\`. Child processes of the
+  app inherit the virtual view, so a tool running inside the app and the user's own
+  terminal disagree about whether a path exists. Lesson: when two observers disagree
+  about a file, ask which process context each one is in before assuming a typo.
+- **Config ownership**: the app reads `claude_desktop_config.json` once at startup and
+  rewrites the whole file from memory whenever it saves a preference. Any edit made
+  while it runs is silently lost within minutes. `scripts/register-claude-desktop.ps1`
+  refuses to run while the app is open for exactly this reason. Same failure mode as
+  editing a ConfigMap that a controller also writes: decide who owns the file.
+- **JSON numbers are not integers**: the server returns `balance_wei` as an exact
+  Python int, but a JavaScript client parsed 6712603153701629485 as
+  6712603153701630000 (IEEE-754 double, 2^53 limit). The exact decimal *string*
+  fields are the authoritative values; raw integers above 2^53 should be strings too.
+
 ### Container hygiene picked up along the way
 
 - Two-stage `uv` build: the resolver runs in a builder image; the runtime image gets

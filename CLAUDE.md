@@ -96,7 +96,9 @@ Langfuse 자체 호스팅은 kind에 무거워 보류, Phase 5에서 Cloud 무�
 - 검증 완료: 실제 메인넷 스모크(ENS·잔고·finalized 블록·USDC 메타·200블록 전송 스캔 6초·Etherscan 키 부재 에러), stdio 전송(CLI spawn), HTTP 전송(`/healthz`·`/metrics`·`POST /mcp`), Docker 이미지 빌드·실행(79MB, uid 10001)
 - `scripts/check-no-signing.sh|.ps1`: ADR-0001 CI 가드
 - LEARNING.md Phase 1 항목 8개 기록
-- 사용자 확인 대기: Claude Desktop에 stdio 등록 후 실제 질의 (`services/mcp-server/claude_desktop_config.example.json`)
+- **Claude Desktop 연결 확인 완료**(23:10): `scripts/register-claude-desktop.ps1`로 등록 → 앱 재시작 → Code 세션에 `mcp__onchain__*` 도구 9개 로드 → `get_eth_balance("vitalik.eth")`·`get_gas_price()` 실호출 성공
+- ⚠️ Claude Desktop 등록 시 함정 2개 (재현 방지): ① Store(MSIX) 빌드는 `%APPDATA%\Claude`가 가상화돼 일반 셸에는 없음. 실제 파일은 `%LOCALAPPDATA%\Packages\Claude_*\LocalCache\Roaming\Claude\claude_desktop_config.json`. Claude Code 세션 내부 도구는 앱의 자식 프로세스라 가상화 경로가 보이므로 사용자 셸과 결과가 다름. ② 앱은 시작 시 파일을 한 번 읽고 이후 설정 저장마다 메모리 상태로 파일을 통째로 덮어씀 → **앱을 완전히 종료한 뒤** 편집해야 함. 스크립트가 두 경우 모두 처리
+- 후속 과제: JS 클라이언트가 `balance_wei` 같은 큰 정수를 float으로 파싱해 정밀도가 깨짐(2^53 초과). 문자열 필드(`balance_eth`)가 정본이며, raw 정수 필드도 문자열로 바꾸는 것을 Phase 2에서 검토
 
 ### 다음: Phase 2 — Agent + LiteLLM + docker compose
 - `services/agent/`: FastAPI `/ask`, MCP 클라이언트(streamable-http), openai SDK → LiteLLM, 바운드된 tool-calling 루프, `/metrics`에 토큰·비용
