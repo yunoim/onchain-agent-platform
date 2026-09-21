@@ -33,15 +33,15 @@ flowchart LR
         graf["Grafana"]
     end
 
-    anthropic[("Anthropic API")]
-    ollama[("Ollama (optional)")]
+    ollama[("Ollama on host GPU<br/>qwen3:8b (default)")]
+    anthropic[("Anthropic API<br/>(optional, needs key)")]
     rpc[("Ethereum JSON-RPC<br/>public endpoint")]
     scan[("Etherscan V2 API<br/>free tier, optional")]
 
     user -->|"POST /ask"| agent
     agent -->|"OpenAI-compatible<br/>chat completions"| gw
-    gw --> anthropic
-    gw -.->|fallback| ollama
+    gw -->|local-default| ollama
+    gw -.->|claude-* aliases,<br/>fallback to local| anthropic
     agent -->|"MCP streamable-http"| mcp
     claude -->|"MCP stdio"| mcp
     mcp -->|"state: balance, block,<br/>gas, tx, ERC-20"| rpc
@@ -59,6 +59,7 @@ Key properties:
 | Works on free tiers | State from public RPC; history from Etherscan free key; log scans bounded to at most 2000 blocks ([ADR-0002](adr/0002-two-tier-data-sources.md)) |
 | One codebase, two transports | Same MCP tools served over stdio (Claude Desktop) and streamable-http (in-cluster) ([ADR-0003](adr/0003-mcp-dual-transport.md)) |
 | Provider-agnostic agent | Agent only speaks the OpenAI-compatible API to LiteLLM; routing, limits and cost live in the gateway ([ADR-0004](adr/0004-litellm-gateway.md)) |
+| Zero-cost by default | `local-default` alias routes to Ollama on the host; hosted aliases activate when a key is present ([ADR-0007](adr/0007-local-first-model-routing.md)) |
 | Reproducible infra | `infra/terraform/local` creates the kind cluster and all Helm releases in one apply ([ADR-0005](adr/0005-terraform-layering.md)) |
 | Images reach the cluster | CI pushes to GHCR; pre-CI local builds use `kind load` ([ADR-0006](adr/0006-image-delivery.md)) |
 
@@ -72,7 +73,7 @@ sequenceDiagram
     participant U as User
     participant A as Agent (FastAPI)
     participant G as LiteLLM Gateway
-    participant L as LLM (Anthropic)
+    participant L as LLM (Ollama qwen3:8b or Anthropic)
     participant M as MCP Server
     participant E as Ethereum RPC / Etherscan
 

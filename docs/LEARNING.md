@@ -157,7 +157,82 @@ Format for each entry:
 
 ## Phase 2: Agent, gateway, docker compose
 
-_(pending)_
+### What a "tool-calling loop" is, mechanically
+
+- **Concept**: the model never runs anything. It returns a structured request
+  ("call `get_eth_balance` with `{address: vitalik.eth}`"), the *agent* executes it, appends
+  the result as a `tool` message, and asks the model again. The loop ends when a reply has
+  no tool calls. Everything the model "did" is therefore visible in the message list.
+- **Where**: `services/agent/src/onchain_agent/agent.py::Agent.run`.
+- **Why bounded**: an 8B model can loop forever re-calling the same tool. `MAX_TOOL_ITERATIONS`
+  caps the round-trips; when it is hit the agent sends one more request *without tools*
+  and the instruction "answer from what you have". The user always gets an answer and the
+  RPC quota has a ceiling.
+- **Gotcha**: tool results must go back *verbatim-ish* but bounded. A 20-row transfer list
+  is a few thousand tokens; unbounded it overflows a local model's context. The agent
+  truncates tool output (`MAX_TOOL_RESULT_CHARS`) and the gateway raises `num_ctx`.
+
+### Why the agent talks to a gateway, not a provider (ADR-0004 in practice)
+
+- **Concept**: the agent imports the `openai` SDK but points `base_url` at LiteLLM. It
+  requests an *alias* (`local-default`); the gateway maps that to `ollama_chat/qwen3:8b`
+  today and could map it to Anthropic tomorrow. Provider keys exist only in the gateway
+  container's environment.
+- **Where**: `services/gateway/litellm/config.yaml` (`model_list`, `router_settings.fallbacks`),
+  `docker-compose.yml` (only `litellm` receives `ANTHROPIC_API_KEY`).
+- **Trade-off**: one more hop and one more container. In exchange, model routing, retries,
+  fallbacks and rate limits are configuration reviewed in a PR, not code paths in every
+  service. This is the same argument as putting TLS termination in an ingress controller.
+
+### Where cost becomes observable
+
+- **Concept**: the gateway returns `usage` (prompt/completion tokens) on every response.
+  The agent multiplies by a per-alias price table and exports Prometheus counters
+  (`onchain_agent_llm_tokens_total`, `onchain_agent_llm_cost_usd_total`). Local inference is
+  priced at zero so the metric stays honest.
+- **Why here and not in the gateway**: LiteLLM's Prometheus callback is an enterprise
+  feature, and persistent spend logs need a database. Counting in the consumer keeps the
+  local stack at three containers. Phase 5 scrapes these counters.
+
+### docker compose as the first "orchestrator"
+
+- **Concept**: compose gives the same primitives Kubernetes will: a network where services
+  resolve each other by name (`http://litellm:4000`), health checks, and start ordering via
+  `depends_on: condition: service_healthy`. Reading the compose file is a preview of the
+  Helm chart.
+- **Gotcha**: containers cannot see the host's `localhost`. Ollama runs on the host GPU, so
+  the gateway reaches it through `host.docker.internal` (Docker Desktop provides it; on
+  Linux `extra_hosts: host-gateway` adds it). In Kubernetes the equivalent is an external
+  Service or an endpoint pointing at the node.
+- **Gotcha**: health checks must not depend on tools the image lacks. The slim images have
+  no `curl`, so the checks use `python -c "urllib.request..."`.
+
+### Measured on the first full run (RTX 3070 Laptop 8 GB, qwen3:8b)
+
+| Demo question | LLM round-trips | Tools | Tokens | Wall time |
+|---|---|---|---|---|
+| ETH balance of vitalik.eth | 2 | `get_eth_balance` | 3,667 | 20 s |
+| USDC transfers > 1M in 300 blocks | 2 | `get_recent_token_transfers` | 4,939 | 46 s |
+| Gas price + latest block | 2 | `get_gas_price`, `get_block` | 3,986 | 27 s |
+
+Most of the prompt tokens are the nine tool schemas repeated every round-trip; the
+answer itself is a few hundred. This is the argument for keeping tool descriptions tight.
+
+**Debugging note**: the first run failed with `Cannot connect to host host.docker.internal`.
+The compose file had `extra_hosts: host.docker.internal:host-gateway`, which on Docker
+Desktop *replaces* the built-in mapping (host loopback) with the Linux VM bridge IP.
+Lesson: a "portable" line copied from Linux guides can break the platform that already
+solved the problem. The agent's 502 carried the gateway's error text verbatim, which is
+why it took one log read to find.
+
+### Small-model realities (ADR-0007)
+
+- `qwen3:8b` emits `<think>...</think>` reasoning in `content`; the agent strips it before
+  returning an answer and before echoing assistant messages back into the conversation.
+- Temperature is pinned low (0.1) for tool loops: creativity is the enemy of well-formed
+  JSON arguments.
+- Malformed tool arguments are not a crash. The agent replies to the model with the parse
+  error as a tool result and lets it correct itself on the next turn.
 
 ## Phase 3: kind + Helm
 

@@ -1,0 +1,42 @@
+[project]
+name = "onchain-agent"
+version = "0.1.0"
+description = "FastAPI agent that answers on-chain questions by driving MCP tools through an LLM gateway"
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "yunoim" }]
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.141.1",
+    "httpx>=0.28.1",
+    "mcp>=2.2.0",
+    "openai>=3.16.2",
+    "prometheus-client>=0.26.0",
+    "pydantic-settings>=2.15.0",
+    "uvicorn[standard]>=0.53.0",
+]
+
+[project.scripts]
+onchain-agent = "onchain_agent.main:main"
+
+[build-system]
+requires = ["uv_build>=0.11.11,<0.12.0"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "N", "W", "SIM"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.16.8",
+]

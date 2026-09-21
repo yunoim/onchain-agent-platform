@@ -1,0 +1,57 @@
+# LiteLLM proxy configuration (ADR-0004, ADR-0007).
+#
+# The agent only ever asks for a model *alias* from `model_list`; which provider serves
+# it is decided here. Secrets are read from the environment (`os.environ/NAME`) and are
+# mounted only into the gateway container.
+#
+# Aliases:
+#   local-default   Ollama qwen3:8b on the host GPU. Default; costs nothing; works offline.
+#   claude-default  Anthropic Sonnet. Used only when ANTHROPIC_API_KEY is set; otherwise
+#                   the router falls back to local-default.
+#   claude-fast     Anthropic Haiku. Same fallback rule.
+
+model_list:
+  - model_name: local-default
+    litellm_params:
+      model: ollama_chat/qwen3:8b
+      api_base: os.environ/OLLAMA_BASE_URL
+      # Tool results (e.g. 20 token transfers) plus schemas need more than Ollama's 4k default.
+      num_ctx: 12288
+      # qwen3 emits <think> blocks; keep answers terse and deterministic for tool loops.
+      temperature: 0.1
+      rpm: 60
+    model_info:
+      # Local inference: report zero cost so the agent's cost metric stays honest.
+      input_cost_per_token: 0
+      output_cost_per_token: 0
+
+  - model_name: claude-default
+    litellm_params:
+      model: anthropic/claude-sonnet-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+      rpm: 30
+
+  - model_name: claude-fast
+    litellm_params:
+      model: anthropic/claude-haiku-4-5-20251001
+      api_key: os.environ/ANTHROPIC_API_KEY
+      rpm: 60
+
+router_settings:
+  # If a hosted alias fails (no key, quota, outage) the request is retried locally.
+  fallbacks:
+    - claude-default: ["local-default"]
+    - claude-fast: ["local-default"]
+  num_retries: 1
+  timeout: 120
+
+litellm_settings:
+  drop_params: true          # silently drop params a provider does not support
+  json_logs: true
+  set_verbose: false
+  request_timeout: 120
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  # No database: virtual keys and persistent spend logs are out of scope for the local
+  # stack. Per-request usage is returned to the agent, which exports it to Prometheus.

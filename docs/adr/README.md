@@ -12,6 +12,7 @@ ADR that supersedes the old one.
 | [0004](0004-litellm-gateway.md) | All LLM traffic goes through a LiteLLM proxy | Accepted |
 | [0005](0005-terraform-layering.md) | Terraform is split into a cluster layer and a reusable platform module | Accepted |
 | [0006](0006-image-delivery.md) | Images are delivered through GHCR; local builds use `kind load` | Accepted |
+| [0007](0007-local-first-model-routing.md) | Local-first model routing: Ollama default, hosted models optional (amends 0004) | Accepted |
 
 Template for new records:
 

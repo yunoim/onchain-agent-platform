@@ -54,7 +54,9 @@ AI 에이전트가 MCP를 통해 온체인 데이터를 읽고 분석하는 플�
 | 0005 | Terraform 클러스터 계층 / 플랫폼 모듈 분리. 시크릿은 TF_VAR로 주입 |
 | 0006 | 이미지는 GHCR, 로컬은 `kind load`. Helm values로 전환 |
 
-기타: Ingress는 ingress-nginx + `*.localtest.me`. LLM은 Anthropic 기본, Ollama 대체 경로.
+| 0007 | 로컬 우선 라우팅: Ollama qwen3:8b 기본, Anthropic alias는 키 있을 때만 (0004 보정) |
+
+기타: Ingress는 ingress-nginx + `*.localtest.me`. Ollama는 호스트에서 실행(컨테이너 GPU 패스스루 회피).
 Langfuse 자체 호스팅은 kind에 무거워 보류, Phase 5에서 Cloud 무료 티어로 재검토.
 
 ## Phase 계획
@@ -100,8 +102,18 @@ Langfuse 자체 호스팅은 kind에 무거워 보류, Phase 5에서 Cloud 무�
 - ⚠️ Claude Desktop 등록 시 함정 2개 (재현 방지): ① Store(MSIX) 빌드는 `%APPDATA%\Claude`가 가상화돼 일반 셸에는 없음. 실제 파일은 `%LOCALAPPDATA%\Packages\Claude_*\LocalCache\Roaming\Claude\claude_desktop_config.json`. Claude Code 세션 내부 도구는 앱의 자식 프로세스라 가상화 경로가 보이므로 사용자 셸과 결과가 다름. ② 앱은 시작 시 파일을 한 번 읽고 이후 설정 저장마다 메모리 상태로 파일을 통째로 덮어씀 → **앱을 완전히 종료한 뒤** 편집해야 함. 스크립트가 두 경우 모두 처리
 - 후속 과제: JS 클라이언트가 `balance_wei` 같은 큰 정수를 float으로 파싱해 정밀도가 깨짐(2^53 초과). 문자열 필드(`balance_eth`)가 정본이며, raw 정수 필드도 문자열로 바꾸는 것을 Phase 2에서 검토
 
-### 다음: Phase 2 — Agent + LiteLLM + docker compose
-- `services/agent/`: FastAPI `/ask`, MCP 클라이언트(streamable-http), openai SDK → LiteLLM, 바운드된 tool-calling 루프, `/metrics`에 토큰·비용
-- `services/gateway/litellm/config.yaml`: alias `claude-default`·`claude-fast`·`local-fallback`, rate limit, spend log
-- `docker-compose.yml`: mcp-server · litellm · agent. 데모 질문 3개를 curl로 검증
-- 필요: `ANTHROPIC_API_KEY` (없으면 Ollama 경로로 대체)
+### 2026-09-21 — Phase 2 완료 (Agent + LiteLLM + docker compose)
+- **사용자 결정: Anthropic 키 없이 Ollama 로컬 모델로 진행** → ADR-0007(로컬 우선 라우팅, ADR-0004 보정). 호스트 RTX 3070 Laptop 8GB, `qwen3:8b`(tool calling 지원 확인), Ollama 0.34.0. `ollama serve`는 호스트에서 수동 실행 상태여야 함
+- `services/gateway/litellm/config.yaml`: alias `local-default`(ollama_chat/qwen3:8b, num_ctx 12288, temp 0.1, 비용 0) · `claude-default`(claude-sonnet-5) · `claude-fast`(claude-haiku-4-5) → 키 없으면 `local-default`로 fallback. DB 없음(spend log 미사용, 토큰·비용은 Agent가 계측)
+- `services/agent/`: FastAPI `POST /ask` · `/tools` · `/healthz` · `/readyz`(MCP+게이트웨이 모두 확인) · `/metrics`. `Agent.run` 루프: 최대 8회, 초과 시 도구 없이 최종 답 강제. `<think>` 제거, 도구 결과 6000자 캡, 잘못된 JSON 인자는 모델에 에러로 되돌림. openai SDK 3.16(호환), mcp 2.2 `Client(url)`. 테스트 12개(가짜 ChatClient·ToolExecutor, TestClient)
+- `docker-compose.yml`: mcp-server · litellm(공식 이미지 main-stable) · agent, healthcheck + `depends_on: service_healthy`
+- **데모 3문 전부 성공** (게이트웨이 경유, 로컬 모델, 비용 $0): ① vitalik.eth 잔고 20초/2회전/3,667토큰 ② USDC 300블록 100만+ 전송 상위 3건 46초/4,939토큰 ③ 가스+최신블록 27초/도구 2개. → **완료 기준 2번 충족**
+- ⚠️ 삽질 기록: compose에 `extra_hosts: host.docker.internal:host-gateway`를 넣으면 Docker Desktop의 기본 매핑(호스트 루프백)을 172.17.0.1로 덮어써 Ollama 연결 실패. 제거로 해결. Linux 호스트는 `OLLAMA_BASE_URL`로 지정
+- `scripts/demo.ps1|.sh`: 데모 3문 실행기
+- 한계: 8B 모델은 요약 문구가 부정확할 수 있음(②에서 "3건 발견"이라 했지만 실제는 매칭 다수 중 상위 3건). 답변 정확성 자체는 도구 결과에 근거
+
+### 다음: Phase 3 — kind + Helm
+- 선행: `winget install Kubernetes.kind` (terraform은 Phase 4)
+- `deploy/kind/cluster.yaml`(extraPortMappings 80/443), ingress-nginx, `deploy/helm/onchain-agent-platform/` 단일 차트(3 Deployment + Service + Ingress + ConfigMap(litellm) + Secret 참조), `values.yaml`(GHCR) / `values-local.yaml`(로컬 이미지, pullPolicy Never), `scripts/kind-load.ps1|.sh`
+- Ollama는 호스트: 클러스터에서 `host.docker.internal:11434`(kind 노드 = Docker Desktop 컨테이너라 동일하게 해석되는지 확인 필요)
+- 검증: `agent.localtest.me/ask`로 데모 3문
