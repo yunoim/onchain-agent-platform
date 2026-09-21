@@ -50,3 +50,4 @@ node_modules/
 
 # kubeconfig written by the kind Terraform provider next to the root module
 infra/terraform/local/*-config
+infra/terraform/local/onchain-agent-config
