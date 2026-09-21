@@ -428,9 +428,78 @@ Long applies now run detached with output to a log file.
 
 ## Phase 5: Observability and CI
 
-_(pending: Prometheus pull model, ServiceMonitor CRDs, Grafana provisioning
-via ConfigMap sidecar, four golden signals applied to an LLM service, GitHub
-Actions matrix and GHCR permissions.)_
+### Prometheus pulls; the Operator tells it where from
+
+- **Concept**: Prometheus scrapes `/metrics` on a schedule (pull), it is not sent data
+  (push). Something must tell it *which* endpoints. With the Prometheus Operator that
+  something is a **ServiceMonitor**: a CRD that says "scrape the Services matching these
+  labels, on this port, at this path". The Operator watches ServiceMonitors and rewrites
+  Prometheus's config. Our chart ships one per service.
+- **Where**: `templates/servicemonitor.yaml`, guarded by
+  `.Capabilities.APIVersions.Has "monitoring.coreos.com/v1"` so the chart installs on a
+  cluster without the Operator too. CI renders both ways.
+- **Gotcha**: kube-prometheus-stack by default only honours monitors carrying its own
+  release label. `serviceMonitorSelectorNilUsesHelmValues: false` (and the pod/rule
+  equivalents) makes it pick up everything. Forgetting this is the classic "my
+  ServiceMonitor exists but the target never appears".
+- **Ordering**: because the templates are CRD-gated, the application release must be
+  installed *after* the monitoring release. In Terraform that is a `depends_on`; the
+  first apply with monitoring re-rendered the app chart and the monitors appeared.
+
+- **Gotcha, chart version is the change signal**: after adding the monitoring templates,
+  `terraform apply` installed kube-prometheus-stack and reported the application release
+  as "0 changed". The helm provider (like Helm itself) decides whether a local chart needs
+  an upgrade from its `version` and values, not from a hash of the template files. Bumping
+  `Chart.yaml` to 0.2.0 produced the in-place upgrade and the monitors appeared. Rule:
+  every template change bumps the chart version, which is also what makes `helm history`
+  meaningful.
+
+### Four golden signals, applied to an LLM service
+
+| Signal | Metric | Alert |
+|---|---|---|
+| Traffic | `onchain_agent_requests_total` | (dashboard only) |
+| Errors | `requests_total{status!="ok"} / total` | `OnchainAgentHighErrorRate` > 20 % for 10 m |
+| Latency | `request_duration_seconds` histogram | `OnchainAgentSlowAnswers` p95 > 120 s |
+| Saturation | tokens/min, LLM round-trips per question, MCP tool p95 | (dashboard) |
+
+Plus the dependency view: `onchain_mcp_tool_calls_total{status="error"}` ratio tells
+whether the RPC provider or a missing key is the problem, not the model.
+Cost is a first-class series (`onchain_agent_llm_cost_usd_total`), which is what makes
+"switch `LLM_MODEL` to a hosted alias" a decision you can watch on a graph.
+
+- **Where**: `templates/prometheusrule.yaml` (PrometheusRule CRD, evaluated by
+  Prometheus; without Alertmanager they show as firing in the Prometheus UI),
+  `dashboards/onchain-agent-platform.json` shipped as a ConfigMap with
+  `grafana_dashboard: "1"` for the Grafana sidecar (`searchNamespace: ALL`).
+
+### Grafana provisioning by label
+
+- **Concept**: kube-prometheus-stack's Grafana runs a sidecar that watches ConfigMaps
+  with a label and drops their JSON into the dashboards folder. Dashboards therefore
+  live in git next to the service they describe, deploy with the chart, and survive pod
+  restarts without a persistent volume.
+- **Gotcha**: the datasource UID in the JSON must match the provisioned datasource
+  (`prometheus` in kube-prometheus-stack); an exported dashboard from another Grafana
+  usually carries a random UID and shows "datasource not found".
+
+### GitHub Actions: what each job proves
+
+| Job | Proves |
+|---|---|
+| `python` (matrix per service) | `uv sync --frozen` reproduces the lock, ruff, pytest |
+| `read-only-guard` | ADR-0001 grep across all services |
+| `helm` | lint, render with and without Operator CRDs, dashboard JSON parses |
+| `terraform` (matrix per root) | `fmt -check`, `init -backend=false`, `validate` with no credentials |
+| `images` (main only) | build both Dockerfiles, push `sha-<short>` and `latest` to GHCR |
+
+- **GHCR permissions**: `permissions: packages: write` plus `GITHUB_TOKEN` is enough to
+  push to `ghcr.io/<owner>/<image>`. The first push creates a *private* package; making it
+  public (so `values.yaml` defaults pull anonymously) is a one-time click in the package
+  settings, not something a workflow can do.
+- **`-backend=false`**: validates HCL and provider schemas without touching any state or
+  cloud API, which is why the EKS root can be checked on every PR without AWS keys.
+- **Matrix + `fail-fast: false`**: one service's failure does not hide the other's result.
 
 ## Phase 6: Wrap-up
 

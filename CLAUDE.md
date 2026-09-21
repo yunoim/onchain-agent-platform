@@ -135,9 +135,17 @@ Langfuse 자체 호스팅은 kind에 무거워 보류, Phase 5에서 Cloud 무�
 - 재실행 `terraform plan` → "No changes" (idempotent 확인)
 - 클러스터는 현재 Terraform 관리 상태로 켜져 있음. 삭제는 `terraform destroy` (kind delete로 지우면 state 드리프트). destroy 경로는 아직 미검증 → Phase 6 마무리에서 destroy→apply 재현 테스트
 
-### 다음: Phase 5 — Observability + CI/CD
-- platform 모듈에 `helm_release` kube-prometheus-stack(namespace monitoring, Grafana admin 비번은 Secret) 추가 → `terraform apply` 증분 적용으로 모듈 확장 검증
-- 차트에 ServiceMonitor(또는 PodMonitor) 템플릿 추가(`metrics.serviceMonitor.enabled`, CRD 있을 때만 렌더), Grafana 대시보드 ConfigMap(sidecar 라벨) — 패널: 요청/지연, LLM 토큰·비용(모델별), 도구 호출, MCP 도구 지연
-- `grafana.localtest.me` Ingress
-- `.github/workflows/ci.yml`: ruff+pytest(두 서비스) · check-no-signing · helm lint/template · terraform fmt -check/validate(local·aws-eks, `-backend=false`) · 이미지 빌드→GHCR push(main), 태그 sha + latest. GHCR public 패키지 설정은 사용자 수동
-- values.yaml 기본(GHCR) 경로로 `use_local_images=false` apply 검증
+### 2026-09-22 — Phase 5 완료 (Observability + CI/CD)
+- **Observability**: platform 모듈에 `kubernetes_namespace monitoring` + `kubernetes_secret grafana-admin`(admin-user/admin-password, Grafana `admin.existingSecret`) + `helm_release` kube-prometheus-stack 91.4.1(`deploy/observability/kube-prometheus-stack-values.yaml`: Alertmanager off, kind에 없는 컨트롤플레인 스크레이프 off, admission webhook off, retention 2d, `*SelectorNilUsesHelmValues: false` 3종, Grafana sidecar `searchNamespace: ALL`). 앱 릴리스는 monitoring에 `depends_on`
+- 차트 0.2.0: `templates/servicemonitor.yaml`(agent·mcp-server, CRD 있을 때만), `prometheusrule.yaml`(알림 4개: TargetDown·HighErrorRate 20%·SlowAnswers p95>120s·McpToolErrors 30%), `grafana-dashboard.yaml`(ConfigMap + `dashboards/onchain-agent-platform.json`, 패널 12개: 요청·에러율·p95·비용 stat, 상태별 요청, 지연, 토큰(모델·kind), LLM 호출, 회전수, 도구 호출, MCP p95, MCP 에러율). 값 `metrics.serviceMonitor|prometheusRule|dashboard`
+- 증분 `terraform apply`: monitoring 3 리소스 추가 5m40s. **앱 릴리스는 "0 changed"** → 차트 버전을 0.1.0→0.2.0으로 올려야 upgrade 됨(helm provider는 로컬 차트 파일 해시를 보지 않음). 두 번째 apply 1초
+- 검증: `grafana.localtest.me` 200(Grafana 13.2.2) · `prometheus.localtest.me` ready · ServiceMonitor 2·PrometheusRule 1·대시보드 ConfigMap 생성 · Prometheus 타깃 2개 발견 · 규칙 4개 로드 · 대시보드가 폴더 `onchain-agent-platform`에 프로비저닝됨
+- **CI**: `.github/workflows/ci.yml` 첫 실행 **8 job 전부 success**(python×2, ADR-0001 guard, helm, terraform×2, image×2). GHCR `onchain-mcp-server`·`onchain-agent`가 sha+latest로 push되고 **익명 pull 가능**(공개 레포 → 패키지 공개로 생성, 수동 설정 불필요)
+- 미실행: `use_local_images=false`(GHCR 경로) apply 검증 → Phase 6 destroy→apply 재현 테스트 때 함께
+- 클러스터 상태: Terraform 관리, monitoring 포함 전부 켜져 있음(kind 노드 메모리 ~3GB 예상)
+
+### 다음: Phase 6 — 마무리
+- README 최종 정리(문제 정의·아키텍처·ADR 링크·데모·실행법·완료 기준 체크), `docs/DEMO.md`(데모 시나리오 스크립트 + 기대 출력), ARCHITECTURE 배포 토폴로지에 monitoring 추가
+- `terraform destroy` → `terraform apply`(GHCR 이미지 경로 `use_local_images=false`) 재현 테스트로 완료 기준 1번 최종 확인
+- LEARNING.md Phase 6 회고("두 번째 시도라면 바꿀 것"), 사용자가 LEARNING만 읽고 설명 가능한지 자가 점검(완료 기준 3번)
+- 후속 과제 정리: raw 정수 필드 문자열화, Langfuse Cloud, EKS 실제 apply 여부

@@ -1,9 +1,13 @@
 # onchain-agent-platform
 
-> **Status: Phase 4 complete.** One `terraform apply` creates a kind cluster, installs
-> ingress-nginx and the platform chart, and the three demo questions are answered at
-> `http://agent.localtest.me` by a local model (Ollama `qwen3:8b`) at zero cost. The same
-> platform module targets AWS EKS (validated, plan-only). Observability and CI follow in Phase 5.
+[![ci](https://github.com/yunoim/onchain-agent-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/yunoim/onchain-agent-platform/actions/workflows/ci.yml)
+
+> **Status: Phase 5 complete.** One `terraform apply` creates a kind cluster with
+> ingress-nginx, kube-prometheus-stack and the platform chart; the three demo questions
+> are answered at `http://agent.localtest.me` by a local model (Ollama `qwen3:8b`) at zero
+> cost, and Grafana shows tokens, cost, latency and tool metrics. CI is green and publishes
+> images to GHCR. The same platform module targets AWS EKS (validated, plan-only).
+> Phase 6 wraps up the docs and a destroy/apply reproduction test.
 > Progress is tracked in [CLAUDE.md](CLAUDE.md); the full design is in
 > [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -25,8 +29,8 @@ User -> AI Agent (FastAPI) -> LiteLLM Gateway -> Anthropic
 | AI gateway | LiteLLM proxy owning model aliases, routing, fallbacks and rate limits; local Ollama by default, hosted models by adding a key; the agent never touches a provider key |
 | Kubernetes | Helm chart for the three services, ingress-nginx, `*.localtest.me` hostnames on a kind cluster |
 | Terraform | `infra/terraform/local`: one `apply` creates the kind cluster and installs everything. `infra/terraform/aws-eks`: the same platform module on EKS, plan-only by default |
-| Observability | kube-prometheus-stack, service `/metrics`, Grafana dashboard with LLM token and cost panels |
-| CI/CD | GitHub Actions: lint, unit tests, image build and push to GHCR, `helm lint`, `terraform validate` |
+| Observability | kube-prometheus-stack via the same Terraform module; ServiceMonitors, four alert rules and a provisioned Grafana dashboard with LLM token and cost panels shipped inside the chart |
+| CI/CD | GitHub Actions: ruff, pytest, ADR-0001 guard, `helm lint` and template, `terraform validate` for both roots, image build and push to GHCR (public) |
 
 ## Design principles
 
@@ -47,8 +51,8 @@ User -> AI Agent (FastAPI) -> LiteLLM Gateway -> Anthropic
 | 2 | Agent + LiteLLM, docker compose | done |
 | 3 | kind + Helm chart | done |
 | 4 | Terraform (kind), then EKS module (plan) | done |
-| 5 | Observability + CI/CD | next |
-| 6 | Final README, demo script | |
+| 5 | Observability + CI/CD | done |
+| 6 | Final README, demo script | next |
 
 ## Quick start (local, docker compose)
 
@@ -159,6 +163,29 @@ Tear everything down, cluster included:
 ```powershell
 terraform destroy
 ```
+
+### Observability
+
+The same apply installs kube-prometheus-stack (`monitoring_enabled = true` by default).
+The chart ships ServiceMonitors for the agent and the MCP server, a PrometheusRule with
+four alerts, and a Grafana dashboard provisioned through the sidecar.
+
+| UI | URL | Login |
+|---|---|---|
+| Grafana | http://grafana.localtest.me | `admin` / `TF_VAR_grafana_admin_password` (default `admin`) |
+| Prometheus | http://prometheus.localtest.me | none |
+
+Dashboard "onchain-agent-platform": requests and latency, tokens and estimated cost per
+model, LLM round-trips per question, tool calls, MCP tool latency and error ratio.
+Set `-var monitoring_enabled=false` on a machine with less than 8 GB for Docker.
+
+### CI
+
+Every push runs ruff and pytest for both services, the ADR-0001 read-only guard,
+`helm lint` and template rendering (with and without the Prometheus Operator CRDs),
+`terraform fmt -check` and `validate` for both roots, and on `main` builds and pushes
+`ghcr.io/yunoim/onchain-mcp-server` and `ghcr.io/yunoim/onchain-agent` tagged with the
+short SHA and `latest`. See [.github/workflows/ci.yml](.github/workflows/ci.yml).
 
 The AWS variant lives in [infra/terraform/aws-eks](infra/terraform/aws-eks/README.md). It
 shares the same platform module and is validated in CI but never applied automatically:
