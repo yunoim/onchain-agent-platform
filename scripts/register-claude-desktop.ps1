@@ -23,10 +23,20 @@ if (Get-Process -Name claude -ErrorAction SilentlyContinue) {
 
 $repoRoot   = Split-Path -Parent $PSScriptRoot
 $serverDir  = Join-Path $repoRoot "services\mcp-server"
-$configPath = Join-Path $env:APPDATA "Claude\claude_desktop_config.json"
 
-if (-not (Test-Path $configPath)) {
-    Write-Host "Config not found at $configPath. Is Claude Desktop installed?" -ForegroundColor Red
+# The Microsoft Store (MSIX) build virtualises %APPDATA%: the file the app really reads is
+# under the package's LocalCache folder, and %APPDATA%\Claude does not exist for a normal
+# shell. Prefer the package path when present; fall back to the classic installer path.
+$candidates = @()
+$candidates += Get-ChildItem -Path (Join-Path $env:LOCALAPPDATA "Packages") -Directory -Filter "Claude_*" -ErrorAction SilentlyContinue |
+    ForEach-Object { Join-Path $_.FullName "LocalCache\Roaming\Claude\claude_desktop_config.json" }
+$candidates += Join-Path $env:APPDATA "Claude\claude_desktop_config.json"
+
+$configPath = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+if ($null -eq $configPath) {
+    Write-Host "claude_desktop_config.json not found. Looked in:" -ForegroundColor Red
+    $candidates | ForEach-Object { Write-Host "  $_" }
+    Write-Host "Is Claude Desktop installed and has it been started at least once?" -ForegroundColor Red
     exit 1
 }
 
@@ -76,4 +86,10 @@ if ($Remove) {
 } else {
     Write-Host "Registered mcpServers.onchain -> $($uv.Source) --directory $serverDir run onchain-mcp"
     Write-Host "Start Claude Desktop, open a new chat, and check the tools menu for 'onchain'."
+    $logDir = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $configPath))
+    if ($configPath -like "*LocalCache*") {
+        Write-Host "Server log (Store build): $logDir\Local\Claude\logs\mcp-server-onchain.log"
+    } else {
+        Write-Host "Server log: $env:LOCALAPPDATA\Claude\logs\mcp-server-onchain.log"
+    }
 }

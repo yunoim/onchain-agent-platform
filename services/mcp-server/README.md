@@ -87,10 +87,12 @@ to run while Claude is open:
 powershell -ExecutionPolicy Bypass -File .\scripts\register-claude-desktop.ps1
 ```
 
-or add the block below to `%APPDATA%\Claude\claude_desktop_config.json` by hand (see
-[`claude_desktop_config.example.json`](claude_desktop_config.example.json)). Start Claude
-Desktop and ask: *"What is the ETH balance of vitalik.eth?"* Server logs land in
-`%LOCALAPPDATA%\Claude\logs\mcp-server-onchain.log`.
+or add the block below to `claude_desktop_config.json` by hand (see
+[`claude_desktop_config.example.json`](claude_desktop_config.example.json)). The file lives
+at `%APPDATA%\Claude\` for the classic installer, or at
+`%LOCALAPPDATA%\Packages\Claude_*\LocalCache\Roaming\Claude\` for the Microsoft Store
+build, whose `%APPDATA%` is virtualised. Start Claude Desktop and ask: *"What is the ETH
+balance of vitalik.eth?"* Server logs land next to the config under `...\Local\Claude\logs\`.
 
 ```json
 {
