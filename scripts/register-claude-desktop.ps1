@@ -86,10 +86,6 @@ if ($Remove) {
 } else {
     Write-Host "Registered mcpServers.onchain -> $($uv.Source) --directory $serverDir run onchain-mcp"
     Write-Host "Start Claude Desktop, open a new chat, and check the tools menu for 'onchain'."
-    $logDir = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $configPath))
-    if ($configPath -like "*LocalCache*") {
-        Write-Host "Server log (Store build): $logDir\Local\Claude\logs\mcp-server-onchain.log"
-    } else {
-        Write-Host "Server log: $env:LOCALAPPDATA\Claude\logs\mcp-server-onchain.log"
-    }
+    Write-Host "If the server does not appear, find its log with:"
+    Write-Host '  Get-ChildItem $env:LOCALAPPDATA -Recurse -Filter mcp-server-onchain.log -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName'
 }
