@@ -124,9 +124,20 @@ Langfuse 자체 호스팅은 kind에 무거워 보류, Phase 5에서 Cloud 무�
 - ⚠️ helm v4 `helm test` 출력 형식이 v3와 달라 grep 필터가 빈 결과를 냈음(실제는 성공). 필터 없이 확인할 것
 - 클러스터는 현재 켜져 있음. 삭제: `kind delete cluster --name onchain-agent`
 
-### 다음: Phase 4 — Terraform
-- 선행: `winget install HashiCorp.Terraform`
-- `infra/terraform/modules/platform/`: `helm_release` ingress-nginx + `helm_release` onchain-agent-platform(values-local 또는 GHCR) + `kubernetes_secret`(TF_VAR로 주입, `secrets.create=false`·`existingSecret`) + kube-prometheus-stack은 Phase 5에서 추가
-- `infra/terraform/local/`: `kind_cluster`(tehcyx/kind provider) → provider kubernetes/helm를 kind 출력(kubeconfig)으로 구성 → `module "platform"`. `terraform apply` 1회로 완료 기준 1번 충족 목표. 기존 kind 클러스터와 충돌하므로 apply 전에 `kind delete cluster`
-- `infra/terraform/aws-eks/`: terraform-aws-modules vpc+eks + `module "platform"`, `terraform validate`/`plan`까지만. 비용·destroy 안내 문서화
-- 이미지: local 루트는 `kind load` 선행(스크립트 재사용) 또는 `null_resource`로 자동화 검토
+### 2026-09-22 — Phase 4 (Terraform) — local apply 성공, EKS validate 통과
+- Terraform 1.16.2. providers: tehcyx/kind 0.11.0, hashicorp/kubernetes 3.2.1, hashicorp/helm 3.3.0, aws 5.100.0. `.terraform.lock.hcl` 커밋(처음 .gitignore에 잘못 넣었던 것 수정)
+- `infra/terraform/modules/platform/`: namespace + `kubernetes_secret_v1`(oap-platform-secrets) + `helm_release` ingress-nginx(옵션, values 문자열) + `helm_release` app(values 순서: 파일 < 인라인 < 모듈 강제값 `secrets.create=false`·`existingSecret`·`ollama.baseUrl`·`litellm.config`)
+- `infra/terraform/local/`: `kind_cluster`(HCL로 cluster.yaml 미러링, labels·extraPortMappings) → provider kubernetes/helm를 kind 출력으로 구성 → `terraform_data` + local-exec `kind load docker-image`(재빌드 후엔 `-replace`) → `module "platform"`
+- **`terraform apply` 1회 성공**: 리소스 6개, 클러스터 1m18s + 이미지 로드 19s + ingress 1m16s + 앱 2m53s ≈ 6분. 3 파드 Running, 파드가 Terraform Secret을 참조함을 확인. **데모 3문 Ingress 경유 성공**(51초/69초/29초) → **완료 기준 1번 충족**
+- `infra/terraform/aws-eks/`: vpc(~>5.13)+eks(~>20.24) 모듈 + 같은 platform 모듈(ingress-nginx는 NLB LoadBalancer values). `init`·`validate` 통과. plan/apply는 AWS 자격증명 없어 미실행(정책상 plan-only). README에 시간당 약 $0.30 비용·destroy 안내
+- ⚠️ 삽질 1: 노드 이미지를 kind CLI 0.33 기본값(v1.37.0)으로 고정했더니 `kubeadm init` 실패 — provider 0.11의 내장 kind 라이브러리는 v1.35.0이 기본. 노드가 라이브러리보다 새면 안 됨 → `kind_node_image` 기본값 빈 문자열(provider 기본)로 유지
+- ⚠️ 삽질 2: 첫 apply 도중 세션이 재시작돼 프로세스가 죽음 → 빈 tfstate + stale lock. 리소스가 없었으므로 두 파일 삭제 후 재실행. 이후 apply는 `nohup ... > apply.log`로 분리 실행
+- 재실행 `terraform plan` → "No changes" (idempotent 확인)
+- 클러스터는 현재 Terraform 관리 상태로 켜져 있음. 삭제는 `terraform destroy` (kind delete로 지우면 state 드리프트). destroy 경로는 아직 미검증 → Phase 6 마무리에서 destroy→apply 재현 테스트
+
+### 다음: Phase 5 — Observability + CI/CD
+- platform 모듈에 `helm_release` kube-prometheus-stack(namespace monitoring, Grafana admin 비번은 Secret) 추가 → `terraform apply` 증분 적용으로 모듈 확장 검증
+- 차트에 ServiceMonitor(또는 PodMonitor) 템플릿 추가(`metrics.serviceMonitor.enabled`, CRD 있을 때만 렌더), Grafana 대시보드 ConfigMap(sidecar 라벨) — 패널: 요청/지연, LLM 토큰·비용(모델별), 도구 호출, MCP 도구 지연
+- `grafana.localtest.me` Ingress
+- `.github/workflows/ci.yml`: ruff+pytest(두 서비스) · check-no-signing · helm lint/template · terraform fmt -check/validate(local·aws-eks, `-backend=false`) · 이미지 빌드→GHCR push(main), 태그 sha + latest. GHCR public 패키지 설정은 사용자 수동
+- values.yaml 기본(GHCR) 경로로 `use_local_images=false` apply 검증

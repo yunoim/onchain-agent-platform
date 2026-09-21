@@ -1,9 +1,9 @@
 # onchain-agent-platform
 
-> **Status: Phase 3 complete.** The stack runs on a local kind cluster behind
-> ingress-nginx (`http://agent.localtest.me`) from a single Helm chart, and via
-> `docker compose` for the quickest start. All three demo questions are answered
-> end-to-end by a local model (Ollama `qwen3:8b`) at zero cost. Terraform follows in Phase 4.
+> **Status: Phase 4 complete.** One `terraform apply` creates a kind cluster, installs
+> ingress-nginx and the platform chart, and the three demo questions are answered at
+> `http://agent.localtest.me` by a local model (Ollama `qwen3:8b`) at zero cost. The same
+> platform module targets AWS EKS (validated, plan-only). Observability and CI follow in Phase 5.
 > Progress is tracked in [CLAUDE.md](CLAUDE.md); the full design is in
 > [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -46,8 +46,8 @@ User -> AI Agent (FastAPI) -> LiteLLM Gateway -> Anthropic
 | 1 | MCP server + tests, Claude Desktop connection | done |
 | 2 | Agent + LiteLLM, docker compose | done |
 | 3 | kind + Helm chart | done |
-| 4 | Terraform (kind), then EKS module (plan) | next |
-| 5 | Observability + CI/CD | |
+| 4 | Terraform (kind), then EKS module (plan) | done |
+| 5 | Observability + CI/CD | next |
 | 6 | Final README, demo script | |
 
 ## Quick start (local, docker compose)
@@ -127,7 +127,42 @@ without editing a hosts file. Tear down with:
 kind delete cluster --name onchain-agent
 ```
 
-`terraform apply` that does all of the above in one step arrives in Phase 4.
+## One command: Terraform (kind cluster + everything on it)
+
+Prerequisites: Docker Desktop, Ollama with `qwen3:8b`, `kind`, `terraform`, and the two
+service images built locally (`docker compose build` or `scripts/kind-load.ps1` builds
+them; Terraform loads them into the cluster). Remove any manually created cluster first
+(`kind delete cluster --name onchain-agent`).
+
+```powershell
+cd infra\terraform\local
+```
+
+```powershell
+terraform init
+```
+
+```powershell
+terraform apply
+```
+
+One apply creates the kind cluster, installs ingress-nginx, writes the platform Secret
+from `TF_VAR_*` variables (all have local defaults), and installs the application chart.
+Then `http://agent.localtest.me/readyz` should report ready. Optional secrets:
+
+```powershell
+$env:TF_VAR_etherscan_api_key = "..."
+```
+
+Tear everything down, cluster included:
+
+```powershell
+terraform destroy
+```
+
+The AWS variant lives in [infra/terraform/aws-eks](infra/terraform/aws-eks/README.md). It
+shares the same platform module and is validated in CI but never applied automatically:
+read its cost note first.
 
 ## License
 

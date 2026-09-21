@@ -326,10 +326,105 @@ knowing before blaming the platform layer for latency.
 
 ## Phase 4: Terraform
 
-_(pending: providers vs resources vs modules, state and why it holds secrets,
-`depends_on` vs implicit graph, the "provider configured from a resource in
-the same apply" problem, `plan` as a review artifact, EKS cost model and
-`destroy` discipline.)_
+### Providers, resources, modules, state
+
+- **Provider**: a plugin that knows how to talk to one API (kind, kubernetes, helm, aws).
+  `required_providers` declares which; `terraform init` downloads them and writes
+  `.terraform.lock.hcl` with exact versions and checksums. That lock file is committed,
+  like `uv.lock`, so a teammate's `init` resolves identically.
+- **Resource**: one object Terraform owns (`kind_cluster.this`, `helm_release.app`).
+  Terraform diffs desired (HCL) against known (state) against real (refresh) and plans
+  the minimum change.
+- **Module**: a directory of resources with variables and outputs, called like a
+  function. `modules/platform` is called from two roots; the roots differ only in how the
+  cluster is made and which values they pass.
+- **State**: the JSON record of what Terraform created and every attribute it read back.
+  It is the only way Terraform maps HCL to real objects, which is why losing it is a
+  disaster and why it is treated as sensitive: `kubernetes_secret_v1.platform` stores the
+  API keys in state in plain text. Locally that is a file on disk; in a team it must be a
+  remote backend with encryption and locking (S3 + DynamoDB, or Terraform Cloud), and the
+  production answer is to not put secret *values* through Terraform at all (External
+  Secrets Operator pulling from a vault).
+- **Where**: `infra/terraform/{modules/platform,local,aws-eks}`.
+
+### The dependency graph, implicit and explicit
+
+- **Concept**: Terraform builds a DAG from attribute references. `module.platform` uses
+  `kind_cluster.this.endpoint` through the provider block, so the cluster is created
+  first without anyone saying so. `depends_on` is for dependencies the graph cannot see:
+  the app chart needs the ingress-nginx *IngressClass* to exist, which no attribute
+  expresses, so `helm_release.app` lists `helm_release.ingress_nginx` explicitly.
+- **Trade-off**: `depends_on` on a module forces everything inside it to wait for
+  everything it names, which can serialise an apply. Use references when an attribute
+  exists; reserve `depends_on` for ordering that is real but invisible.
+
+### The sharp edge: providers configured from a resource in the same apply
+
+- **Concept**: the `kubernetes` and `helm` providers need an endpoint and credentials, and
+  in the local root those come from `kind_cluster.this`, which does not exist until
+  mid-apply. Terraform allows this but with limits: values must be known after the
+  resource is created (kind's are), `plan` shows provider-dependent resources as
+  "known after apply", and `destroy` can fail if the cluster disappears before the
+  provider tries to delete the Helm releases inside it.
+- **How this root copes**: `wait_for_ready = true` on the cluster; the platform module is
+  `depends_on` the cluster and the image-load step; on destroy, Terraform reverses the
+  graph so releases go before the cluster. If a destroy ever wedges, `kind delete cluster`
+  plus `terraform state rm` of the in-cluster resources is the escape hatch.
+- **Why not split into two applies?** Many teams do (cluster root, then platform root
+  with a kubeconfig data source). The completion criterion here was one `apply`, and the
+  EKS root demonstrates the same pattern with `aws_eks_cluster_auth`, so the sharp edge
+  is worth showing rather than hiding. Recorded as a conscious trade-off in ADR-0005.
+
+### Helm through Terraform vs Helm CLI
+
+- **Concept**: `helm_release` renders and installs the chart exactly as `helm upgrade
+  --install` would, but records the release in Terraform state as well as in Helm's own
+  release Secret. Two owners of one object is drift waiting to happen, so the rule is:
+  Terraform owns releases; the Helm CLI is for `lint`, `template`, `test` and reading.
+- **Values plumbing**: the module composes `values = [file(...), yamlencode(...)]` in a
+  fixed order (chart defaults < values files < inline < module-owned). The module forces
+  `secrets.create=false` and `existingSecret` so the chart can never recreate the Secret
+  Terraform manages. Same layering as Helm's own precedence, made explicit.
+- **`terraform_data` + `local-exec`** copies locally built images into the kind node. It is
+  the one imperative step in the root, isolated and re-runnable with `-replace`. On EKS it
+  does not exist because images come from GHCR (ADR-0006).
+
+### Measured: one `terraform apply` from nothing
+
+| Step | Resource | Time |
+|---|---|---|
+| kind cluster (kubeadm init, CNI, ready) | `kind_cluster.this` | 1 m 18 s |
+| load two local images into the node | `terraform_data.kind_load_images` | 19 s |
+| namespace + Secret | `kubernetes_*` | < 1 s |
+| ingress-nginx chart, `wait = true` | `helm_release.ingress_nginx` | 1 m 16 s |
+| application chart, `wait = true` (includes the LiteLLM image pull) | `helm_release.app` | 2 m 53 s |
+| **total** | 6 resources | **about 6 min** |
+
+A second `terraform plan` reported "No changes": the configuration is idempotent, which
+is the property that makes `apply` safe to run again after editing a value.
+
+**Gotcha, node image vs provider library**: pinning `kindest/node:v1.37.0` (the image the
+kind CLI 0.33 uses) made `kubeadm init` fail inside the provider. The provider bundles its
+own kind library, whose default node is v1.35.0; a node image *newer* than the library's
+kubeadm config API is not supported. Two lessons: a Terraform provider is a frozen copy of
+a tool, not a wrapper around the one on your PATH; and "pin everything" needs the pin to
+come from the thing that consumes it.
+
+**Gotcha, interrupted apply**: the first run died with the session and left an empty
+`terraform.tfstate` and a stale `.terraform.tfstate.lock.info`. Because no resource had
+been created yet, deleting both files was the correct fix; had the cluster existed, the
+answer would have been `terraform import` (or `kind delete cluster` and start over).
+Long applies now run detached with output to a log file.
+
+### `plan` as the review artifact; `destroy` as discipline
+
+- A `terraform plan` output is the thing a reviewer reads in a PR: it lists every create,
+  update-in-place, and destroy-and-recreate (`-/+`, the dangerous one) before anything
+  happens. CI runs `validate` everywhere and `plan` where credentials exist.
+- The EKS root carries its own price list (about $0.30 per hour: control plane, two
+  t3.medium, one NAT gateway, one NLB) and a `destroy_reminder` output, because the two
+  most expensive items bill while idle. Policy for this repo: EKS is planned, never
+  auto-applied.
 
 ## Phase 5: Observability and CI
 

@@ -20,9 +20,8 @@ build/
 .coverage
 htmlcov/
 
-# Terraform
+# Terraform (.terraform.lock.hcl IS committed: it pins provider versions and checksums)
 .terraform/
-.terraform.lock.hcl
 *.tfstate
 *.tfstate.*
 crash.log
@@ -45,3 +44,6 @@ Thumbs.db
 
 # Node (in case of tooling)
 node_modules/
+
+# Local run logs
+*.log
