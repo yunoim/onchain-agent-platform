@@ -49,7 +49,93 @@ Format for each entry:
 
 ## Phase 1: MCP server
 
-_(pending)_
+### What an MCP server actually is
+
+- **Concept**: a process that answers three questions over JSON-RPC: "what tools do you
+  have?" (`tools/list`), "run this one with these arguments" (`tools/call`), and
+  "what should the model know about you?" (`instructions`). The tool schema is
+  generated from Python type hints, so the function signature *is* the API contract
+  the LLM sees. Docstrings become the tool descriptions the model reads to decide
+  when to call what.
+- **Where**: `services/mcp-server/src/onchain_mcp/tools/*.py`; the in-memory
+  protocol test in `tests/test_server_tools.py` asserts the schema has exactly the
+  parameters we intend and that the injected `Context` never leaks into it.
+- **Gotcha**: the `mcp` SDK 2.x renamed `FastMCP` to `MCPServer` and switched result
+  attributes to snake_case (`input_schema`, `is_error`). Pinning the SDK major in
+  `pyproject.toml` is not optional for a server that is meant to be rebuilt later.
+
+### Lifespan context instead of globals
+
+- **Concept**: the server has a lifespan (startup to shutdown). Whatever the lifespan
+  yields is handed to every tool call through `ctx.request_context.lifespan_context`.
+  This is where long-lived clients (the web3 provider, the Etherscan HTTP client)
+  belong, so they are created once, closed once, and are trivially swappable in tests.
+- **Where**: `state.py` (`AppState`), `server.py` (`build_server(..., state_factory=)`).
+- **Trade-off**: slightly more plumbing than a module-level `w3 = Web3(...)`, but the
+  whole test suite runs offline because the factory injects a fake Web3. Same pattern
+  Kubernetes will want later: configuration in, dependencies constructed at start,
+  readiness only after they exist.
+
+### Sync tools, async server
+
+- **Concept**: web3.py's HTTP provider is blocking. The SDK runs a plain `def` tool on a
+  worker thread automatically, so blocking calls do not stall the event loop that is
+  serving other MCP requests. Writing the tools as sync functions was the simpler and
+  correct choice here.
+- **Gotcha**: this means CPU-bound or very slow RPC calls compete for the default
+  thread pool. Fine for a demo; a production server would cap concurrency or move to
+  `AsyncWeb3`.
+
+### Two transports, one binary (ADR-0003 in practice)
+
+- **Concept**: stdio means the client (Claude Desktop) spawns the server as a child and
+  talks over stdin/stdout. That is why logs must go to stderr: a stray `print()` on
+  stdout corrupts the protocol stream. streamable-http means the server is a normal
+  HTTP service (`POST /mcp`), which is what a Kubernetes Service can front.
+- **Where**: `server.py::main`, `--transport` flag; `logging.basicConfig(stream=sys.stderr)`.
+- **Stateless HTTP**: the SDK defaults to one session per client with server-side
+  state. `MCP_STATELESS=true` turns that off so two replicas behind one Service can
+  answer any request. The cost is no server-initiated notifications, which these
+  tools do not need.
+- **DNS-rebinding protection**: the SDK can reject requests whose `Host` header is not
+  localhost. Inside a cluster the `Host` header is `mcp-server:8000`, so it must be
+  off there; the cluster network boundary is the actual control.
+
+### Bounded reads are a security property, not just a quota trick
+
+- **Concept**: `eth_getLogs` over an unbounded range is how you get a public RPC to ban
+  you. Capping at 2000 blocks (`MAX_LOG_BLOCK_RANGE`) and 100 results makes the worst
+  case a model can cause cheap and predictable. The same cap protects the Etherscan
+  free tier via `MAX_HISTORY_ITEMS`.
+- **Measured**: 200 blocks of USDC transfers = about 19,800 log entries, 6 seconds on
+  PublicNode. 2000 blocks stays under the provider's response-size limit but is the
+  practical ceiling.
+
+### Exact money math
+
+- **Concept**: 1 ETH is 10^18 wei; USDC has 6 decimals. Floats lose precision above
+  2^53, so every human-readable amount is produced with `Decimal` and returned as a
+  string. The raw integer is returned alongside for anyone who wants to compute.
+- **Where**: `formatting.py`; tests assert `wei_to_eth(1) == "0.000000000000000001"`.
+
+### The read-only guarantee as code
+
+- **Concept**: an architecture rule that lives only in a document decays. ADR-0001 is
+  enforced twice: `tests/test_read_only_guarantee.py` greps the package for signing
+  identifiers and checks the ERC-20 ABI is view-only; `scripts/check-no-signing.sh`
+  does the same in CI across all services.
+- **Trade-off**: grep-based, so a determined author could evade it. The point is to
+  make accidental scope creep fail loudly, not to stop a malicious insider.
+
+### Container hygiene picked up along the way
+
+- Two-stage `uv` build: the resolver runs in a builder image; the runtime image gets
+  only the virtualenv. Dependency layer is installed before source is copied so code
+  edits do not re-resolve packages.
+- Non-root user (`uid 10001`), `HEALTHCHECK` hitting `/healthz`, `PYTHONUNBUFFERED=1`
+  so logs stream. Image is about 80 MB.
+- `.dockerignore` excludes `.venv` and tests; otherwise the host virtualenv (Windows
+  binaries) would be copied into the Linux build context.
 
 ## Phase 2: Agent, gateway, docker compose
 

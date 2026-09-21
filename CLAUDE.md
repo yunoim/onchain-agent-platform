@@ -35,7 +35,7 @@ AI 에이전트가 MCP를 통해 온체인 데이터를 읽고 분석하는 플�
 - 공개물(README·커밋·문서)에 실명·현 직장명·직책을 넣지 않음. GitHub 핸들 `yunoim`만 사용
 
 ## 아키텍처 (상세: docs/ARCHITECTURE.md, 결정 근거: docs/adr/)
-1. MCP Server (Python 3.12, FastMCP, web3.py 7) — 읽기 전용 도구 9개, stdio + streamable-http
+1. MCP Server (Python 3.12, mcp SDK 2.x `MCPServer`, web3.py 8) — 읽기 전용 도구 9개, stdio + streamable-http
 2. AI Agent (FastAPI) — MCP 클라이언트 + 바운드된 tool-calling 루프, openai SDK로 게이트웨이만 호출
 3. AI Gateway (LiteLLM Proxy 공식 이미지) — 모델 alias 라우팅, rate limit, spend log
 4. Observability — kube-prometheus-stack + 서비스 /metrics, 토큰·비용 지표는 Agent가 노출
@@ -88,6 +88,18 @@ Langfuse 자체 호스팅은 kind에 무거워 보류, Phase 5에서 Cloud 무�
 - 로컬 툴 확인: git·python·uv·docker·kubectl·helm 있음 / **kind·terraform 미설치** → Phase 3·4 전에 winget 설치
 - 미확정: Anthropic API 키 준비 여부(Phase 2에 필요), EKS 실제 apply 여부(Phase 4 끝에 재확인)
 
-### 다음: Phase 1 — MCP 서버
-- `services/mcp-server/` uv 프로젝트, `onchain_mcp/` 패키지, 도구 9개, RPC mock 단위 테스트
-- Claude Desktop config에 stdio 등록해 실제 질의로 검증
+### 2026-09-21 — Phase 1 완료 (MCP 서버)
+- `services/mcp-server/`: uv 프로젝트, `onchain_mcp` 패키지, 도구 9개, `onchain-mcp` CLI(`--transport stdio|streamable-http`)
+- **설치된 SDK는 mcp 2.2.0** — `FastMCP`가 `MCPServer`로 개명됨(`mcp.server.mcpserver`). 결과 속성은 snake_case(`input_schema`, `is_error`). web3 8.0.0
+- 도구는 동기 함수로 작성(SDK가 워커 스레드에서 실행). 클라이언트는 lifespan에서 만들어 `ctx.request_context.lifespan_context`로 주입. 테스트는 `state_factory`로 가짜 Web3 주입
+- 테스트 44개 통과(가짜 Web3, httpx MockTransport, 인메모리 `Client(server)`, ADR-0001 grep 테스트)
+- 검증 완료: 실제 메인넷 스모크(ENS·잔고·finalized 블록·USDC 메타·200블록 전송 스캔 6초·Etherscan 키 부재 에러), stdio 전송(CLI spawn), HTTP 전송(`/healthz`·`/metrics`·`POST /mcp`), Docker 이미지 빌드·실행(79MB, uid 10001)
+- `scripts/check-no-signing.sh|.ps1`: ADR-0001 CI 가드
+- LEARNING.md Phase 1 항목 8개 기록
+- 사용자 확인 대기: Claude Desktop에 stdio 등록 후 실제 질의 (`services/mcp-server/claude_desktop_config.example.json`)
+
+### 다음: Phase 2 — Agent + LiteLLM + docker compose
+- `services/agent/`: FastAPI `/ask`, MCP 클라이언트(streamable-http), openai SDK → LiteLLM, 바운드된 tool-calling 루프, `/metrics`에 토큰·비용
+- `services/gateway/litellm/config.yaml`: alias `claude-default`·`claude-fast`·`local-fallback`, rate limit, spend log
+- `docker-compose.yml`: mcp-server · litellm · agent. 데모 질문 3개를 curl로 검증
+- 필요: `ANTHROPIC_API_KEY` (없으면 Ollama 경로로 대체)

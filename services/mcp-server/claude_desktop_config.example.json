@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "onchain": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "C:\\Users\\<you>\\onchain-agent-platform\\services\\mcp-server",
+        "run",
+        "onchain-mcp"
+      ],
+      "env": {
+        "ETH_RPC_URL": "https://ethereum-rpc.publicnode.com",
+        "ETHERSCAN_API_KEY": ""
+      }
+    }
+  }
+}

@@ -28,7 +28,7 @@ flowchart LR
     subgraph platform["onchain-agent-platform"]
         agent["AI Agent<br/>FastAPI - tool-calling loop"]
         gw["AI Gateway<br/>LiteLLM Proxy"]
-        mcp["MCP Server<br/>FastMCP - read-only tools"]
+        mcp["MCP Server<br/>mcp SDK MCPServer - read-only tools"]
         prom["Prometheus"]
         graf["Grafana"]
     end
@@ -164,7 +164,7 @@ onchain-agent-platform/
 │   ├── DEMO.md                # demo script (Phase 6)
 │   └── adr/                   # architecture decision records
 ├── services/
-│   ├── mcp-server/            # Python - FastMCP - web3.py - pytest
+│   ├── mcp-server/            # Python - mcp SDK 2.x - web3.py 8 - pytest
 │   ├── agent/                 # Python - FastAPI - MCP client - OpenAI SDK
 │   └── gateway/litellm/       # LiteLLM proxy config (no code)
 ├── deploy/

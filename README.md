@@ -1,6 +1,7 @@
 # onchain-agent-platform
 
-> **Status: Phase 0 (design) complete. Code lands in Phase 1.**
+> **Status: Phase 1 complete.** The MCP server works end-to-end against Ethereum
+> mainnet over stdio and HTTP; see [services/mcp-server](services/mcp-server/README.md).
 > Progress is tracked in [CLAUDE.md](CLAUDE.md); the full design is in
 > [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -17,7 +18,7 @@ User -> AI Agent (FastAPI) -> LiteLLM Gateway -> Anthropic
 
 | Area | Deliverable |
 |---|---|
-| MCP | A FastMCP server exposing 9 read-only Ethereum tools, tested with mocked RPC, usable from Claude Desktop (stdio) and from the cluster (streamable-http) |
+| MCP | An `MCPServer` (mcp SDK 2.x) exposing 9 read-only Ethereum tools, tested with a fake RPC, usable from Claude Desktop (stdio) and from the cluster (streamable-http) |
 | Agent | A FastAPI service that answers natural-language questions by driving those tools through a bounded tool-calling loop |
 | AI gateway | LiteLLM proxy owning model aliases, routing, rate limits and spend logs; the agent never touches a provider key |
 | Kubernetes | Helm chart for the three services, ingress-nginx, `*.localtest.me` hostnames on a kind cluster |
@@ -40,8 +41,8 @@ User -> AI Agent (FastAPI) -> LiteLLM Gateway -> Anthropic
 | Phase | Scope | Status |
 |---|---|---|
 | 0 | Repository layout, architecture, ADRs | done |
-| 1 | MCP server + tests, Claude Desktop connection | next |
-| 2 | Agent + LiteLLM, docker compose | |
+| 1 | MCP server + tests, Claude Desktop connection | done |
+| 2 | Agent + LiteLLM, docker compose | next |
 | 3 | kind + Helm chart | |
 | 4 | Terraform (kind), then EKS module (plan) | |
 | 5 | Observability + CI/CD | |

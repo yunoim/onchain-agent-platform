@@ -19,7 +19,8 @@ two drift.
 ## Decision
 
 - Tool implementations live in `onchain_mcp/tools/` and are registered on a
-  single `FastMCP` instance in `onchain_mcp/server.py`.
+  single `MCPServer` instance (the mcp SDK 2.x name for what 1.x called
+  `FastMCP`) in `onchain_mcp/server.py`.
 - A single CLI entry point, `onchain-mcp --transport {stdio,streamable-http}`,
   selects the transport at startup. Default is stdio (Claude Desktop friendly).
 - The container image runs `--transport streamable-http --host 0.0.0.0
