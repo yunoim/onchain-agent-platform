@@ -64,6 +64,11 @@ variable "anthropic_api_key" {
   default   = ""
 }
 
+variable "grafana_admin_password" {
+  type      = string
+  sensitive = true
+}
+
 variable "tags" {
   type = map(string)
   default = {

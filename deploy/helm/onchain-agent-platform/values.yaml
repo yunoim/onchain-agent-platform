@@ -117,8 +117,24 @@ ingress:
   exposeMcpServer: false
   tls: []
 
-# Pod annotations picked up by the Phase 5 Prometheus scrape config.
 metrics:
+  # Pod annotations for annotation-based scrape configs (kept for clusters without the
+  # Prometheus Operator).
   annotations:
     prometheus.io/scrape: "true"
     prometheus.io/path: /metrics
+  # Operator-native objects. Each renders only if its CRD exists in the cluster, so the
+  # chart installs cleanly with or without kube-prometheus-stack.
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+    # Extra labels if your Prometheus selects monitors by label (e.g. release: monitoring).
+    labels: {}
+  prometheusRule:
+    enabled: true
+    labels: {}
+  # Grafana dashboard shipped as a ConfigMap for the kube-prometheus-stack sidecar.
+  dashboard:
+    enabled: true
+    label: grafana_dashboard
+    folder: onchain-agent-platform

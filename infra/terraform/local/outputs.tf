@@ -10,6 +10,14 @@ output "agent_url" {
   value = "http://agent.localtest.me"
 }
 
+output "grafana_url" {
+  value = var.monitoring_enabled ? "http://grafana.localtest.me (user: admin)" : null
+}
+
+output "prometheus_url" {
+  value = var.monitoring_enabled ? "http://prometheus.localtest.me" : null
+}
+
 output "namespace" {
   value = module.platform.namespace
 }

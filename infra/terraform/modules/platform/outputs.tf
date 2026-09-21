@@ -13,3 +13,7 @@ output "secret_name" {
 output "ingress_nginx_installed" {
   value = var.ingress_nginx_enabled
 }
+
+output "monitoring_namespace" {
+  value = var.monitoring_enabled ? kubernetes_namespace_v1.monitoring[0].metadata[0].name : null
+}

@@ -65,3 +65,39 @@ variable "helm_timeout_seconds" {
   type    = number
   default = 600
 }
+
+# --- Observability (Phase 5) ---
+
+variable "monitoring_enabled" {
+  description = "Install kube-prometheus-stack (Prometheus Operator, Prometheus, Grafana, kube-state-metrics, node-exporter)."
+  type        = bool
+  default     = true
+}
+
+variable "monitoring_namespace" {
+  type    = string
+  default = "monitoring"
+}
+
+variable "monitoring_chart_version" {
+  type    = string
+  default = "91.4.1"
+}
+
+variable "monitoring_values" {
+  description = "Values (YAML string) for kube-prometheus-stack. Sized per cluster type."
+  type        = string
+  default     = ""
+}
+
+variable "grafana_admin_user" {
+  type    = string
+  default = "admin"
+}
+
+variable "grafana_admin_password" {
+  description = "Grafana admin password, written to Secret monitoring/grafana-admin."
+  type        = string
+  sensitive   = true
+  default     = "admin"
+}

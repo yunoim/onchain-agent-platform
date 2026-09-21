@@ -1,0 +1,137 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}
+
+jobs:
+  python:
+    name: python (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [mcp-server, agent]
+    defaults:
+      run:
+        working-directory: services/${{ matrix.service }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: services/${{ matrix.service }}/uv.lock
+      - name: Sync dependencies (locked)
+        run: uv sync --frozen
+      - name: Lint
+        run: uv run ruff check src tests
+      - name: Format check
+        run: uv run ruff format --check src tests
+      - name: Unit tests
+        run: uv run pytest -q
+
+  read-only-guard:
+    name: ADR-0001 read-only guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/check-no-signing.sh
+
+  helm:
+    name: helm lint and template
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.4
+      - name: Lint (default values)
+        run: helm lint deploy/helm/onchain-agent-platform
+      - name: Lint (local values)
+        run: helm lint deploy/helm/onchain-agent-platform -f deploy/helm/onchain-agent-platform/values-local.yaml
+      - name: Render with the canonical LiteLLM config and operator CRDs present
+        run: |
+          helm template ci deploy/helm/onchain-agent-platform \
+            -f deploy/helm/onchain-agent-platform/values-local.yaml \
+            --set-file litellm.config=services/gateway/litellm/config.yaml \
+            --api-versions monitoring.coreos.com/v1 \
+            > /tmp/rendered.yaml
+          echo "rendered kinds:"; grep -E '^kind:' /tmp/rendered.yaml | sort | uniq -c
+          grep -q 'kind: ServiceMonitor' /tmp/rendered.yaml
+          grep -q 'kind: PrometheusRule' /tmp/rendered.yaml
+          grep -q 'claude-default' /tmp/rendered.yaml
+      - name: Render without operator CRDs (must still succeed)
+        run: helm template ci deploy/helm/onchain-agent-platform > /dev/null
+      - name: Dashboard JSON is valid
+        run: python3 -m json.tool deploy/helm/onchain-agent-platform/dashboards/onchain-agent-platform.json > /dev/null
+
+  terraform:
+    name: terraform validate (${{ matrix.root }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        root: [local, aws-eks]
+    defaults:
+      run:
+        working-directory: infra/terraform/${{ matrix.root }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+      - name: Format check (whole tree)
+        run: terraform fmt -check -recursive ../
+      - name: Init (no backend, no credentials)
+        run: terraform init -input=false -backend=false
+      - name: Validate
+        run: terraform validate
+
+  images:
+    name: image (${{ matrix.service }})
+    needs: [python, read-only-guard]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - service: mcp-server
+            image: onchain-mcp-server
+          - service: agent
+            image: onchain-agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_PREFIX }}/${{ matrix.image }}
+          tags: |
+            type=sha,format=short
+            type=raw,value=latest
+      - uses: docker/build-push-action@v6
+        with:
+          context: services/${{ matrix.service }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}

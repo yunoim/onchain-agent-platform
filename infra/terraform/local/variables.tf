@@ -26,7 +26,19 @@ variable "ollama_base_url" {
   default = "http://host.docker.internal:11434"
 }
 
+variable "monitoring_enabled" {
+  description = "Install kube-prometheus-stack. Needs roughly 1 GB of extra memory in the Docker VM."
+  type        = bool
+  default     = true
+}
+
 # --- Secrets: provide via TF_VAR_* env vars, never via a committed tfvars file ---
+
+variable "grafana_admin_password" {
+  type      = string
+  sensitive = true
+  default   = "admin"
+}
 
 variable "litellm_master_key" {
   type      = string

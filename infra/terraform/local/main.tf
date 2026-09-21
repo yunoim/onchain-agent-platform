@@ -105,5 +105,9 @@ module "platform" {
   ingress_nginx_enabled = true
   ingress_nginx_values  = file("${local.repo_root}/deploy/kind/ingress-nginx-values.yaml")
 
+  monitoring_enabled     = var.monitoring_enabled
+  monitoring_values      = file("${local.repo_root}/deploy/observability/kube-prometheus-stack-values.yaml")
+  grafana_admin_password = var.grafana_admin_password
+
   depends_on = [kind_cluster.this, terraform_data.kind_load_images]
 }

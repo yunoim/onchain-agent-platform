@@ -1,0 +1,27 @@
+{{- if and .Values.metrics.serviceMonitor.enabled (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1") }}
+{{- range $component := list "agent" "mcp-server" }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "oap.componentName" (dict "root" $ "component" $component) }}
+  labels:
+    {{- include "oap.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
+    {{- with $.Values.metrics.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  # Match the Service by its selector labels; the Service's `http` port serves /metrics.
+  selector:
+    matchLabels:
+      {{- include "oap.selectorLabels" (dict "root" $ "component" $component) | nindent 6 }}
+  namespaceSelector:
+    matchNames:
+      - {{ $.Release.Namespace }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ $.Values.metrics.serviceMonitor.interval }}
+{{- end }}
+{{- end }}

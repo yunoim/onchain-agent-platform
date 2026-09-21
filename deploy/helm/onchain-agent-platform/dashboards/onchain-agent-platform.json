@@ -1,0 +1,119 @@
+{
+  "title": "onchain-agent-platform",
+  "uid": "onchain-agent-platform",
+  "tags": ["onchain", "llm", "mcp"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "type": "row", "title": "Agent: traffic and latency", "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }, "id": 100
+    },
+    {
+      "id": 1, "type": "stat", "title": "Questions answered (24h)",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum(increase(onchain_agent_requests_total{status=\"ok\"}[24h]))" }],
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0 }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" }
+    },
+    {
+      "id": 2, "type": "stat", "title": "Error ratio (1h)",
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum(increase(onchain_agent_requests_total{status!=\"ok\"}[1h])) / clamp_min(sum(increase(onchain_agent_requests_total[1h])), 1)" }],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "decimals": 1, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 0.1 }, { "color": "red", "value": 0.2 } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" }
+    },
+    {
+      "id": 3, "type": "stat", "title": "p95 answer latency (1h)",
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "histogram_quantile(0.95, sum by (le) (rate(onchain_agent_request_duration_seconds_bucket[1h])))" }],
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 1 }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" }
+    },
+    {
+      "id": 4, "type": "stat", "title": "Estimated LLM spend (24h)",
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum(increase(onchain_agent_llm_cost_usd_total[24h]))" }],
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 4 }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" }
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Requests / min by status",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum by (status) (rate(onchain_agent_requests_total[5m])) * 60", "legendFormat": "{{status}}" }],
+      "fieldConfig": { "defaults": { "unit": "reqpm", "custom": { "drawStyle": "bars", "fillOpacity": 60, "stacking": { "mode": "normal" } } }, "overrides": [] }
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "Answer latency p50 / p95",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.50, sum by (le) (rate(onchain_agent_request_duration_seconds_bucket[15m])))", "legendFormat": "p50" },
+        { "refId": "B", "expr": "histogram_quantile(0.95, sum by (le) (rate(onchain_agent_request_duration_seconds_bucket[15m])))", "legendFormat": "p95" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
+    },
+    {
+      "type": "row", "title": "LLM: tokens, cost, round-trips", "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 14 }, "id": 101
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Tokens / min by model and kind",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 15 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum by (model, kind) (rate(onchain_agent_llm_tokens_total[5m])) * 60", "legendFormat": "{{model}} {{kind}}" }],
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "stacking": { "mode": "normal" }, "fillOpacity": 30 } }, "overrides": [] }
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "LLM calls / min by model and status",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 15 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum by (model, status) (rate(onchain_agent_llm_calls_total[5m])) * 60", "legendFormat": "{{model}} {{status}}" }],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    },
+    {
+      "id": 9, "type": "stat", "title": "Avg LLM round-trips per question",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 15 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum(increase(onchain_agent_tool_iterations_sum[6h])) / clamp_min(sum(increase(onchain_agent_tool_iterations_count[6h])), 1)" }],
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 2 }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" }
+    },
+    {
+      "type": "row", "title": "Tools: agent side and MCP server side", "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 23 }, "id": 102
+    },
+    {
+      "id": 10, "type": "timeseries", "title": "Tool calls / min by tool (agent view)",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum by (tool) (rate(onchain_agent_tool_calls_total[5m])) * 60", "legendFormat": "{{tool}}" }],
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "stacking": { "mode": "normal" }, "fillOpacity": 30 } }, "overrides": [] }
+    },
+    {
+      "id": 11, "type": "timeseries", "title": "MCP tool p95 duration by tool",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "histogram_quantile(0.95, sum by (le, tool) (rate(onchain_mcp_tool_duration_seconds_bucket[15m])))", "legendFormat": "{{tool}}" }],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
+    },
+    {
+      "id": 12, "type": "bargauge", "title": "MCP tool error ratio (6h)",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum by (tool) (increase(onchain_mcp_tool_calls_total{status=\"error\"}[6h])) / clamp_min(sum by (tool) (increase(onchain_mcp_tool_calls_total[6h])), 1)", "legendFormat": "{{tool}}" }],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 0.1 }, { "color": "red", "value": 0.3 } ] } }, "overrides": [] },
+      "options": { "displayMode": "gradient", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    }
+  ]
+}

@@ -1,0 +1,101 @@
+# kube-prometheus-stack values for the local cluster (chart: prometheus-community/kube-prometheus-stack).
+# Installed by infra/terraform/modules/platform when monitoring_enabled = true.
+#
+# Sized for an 8 GB Docker Desktop VM: no Alertmanager, short retention, no persistence,
+# and the control-plane component scrapes that kind does not expose are turned off so the
+# targets page is green instead of a wall of "down".
+
+fullnameOverride: monitoring
+
+alertmanager:
+  enabled: false # rules still evaluate; firing alerts show in the Prometheus UI
+
+# kind runs these as static pods bound to localhost; the default scrapes would fail.
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeEtcd:
+  enabled: false
+kubeProxy:
+  enabled: false
+
+prometheusOperator:
+  admissionWebhooks:
+    enabled: false # one fewer cert Job on a throwaway cluster
+  tls:
+    enabled: false
+  resources:
+    requests:
+      cpu: 50m
+      memory: 100Mi
+
+prometheus:
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    hosts:
+      - prometheus.localtest.me
+    paths:
+      - /
+    pathType: Prefix
+  prometheusSpec:
+    # Pick up ServiceMonitors / PodMonitors / PrometheusRules from any namespace and any
+    # release, not only the ones labelled with this release name. Without these three
+    # flags the application chart's monitors are silently ignored.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    retention: 2d
+    scrapeInterval: 30s
+    evaluationInterval: 30s
+    resources:
+      requests:
+        cpu: 100m
+        memory: 400Mi
+      limits:
+        memory: 1Gi
+
+grafana:
+  enabled: true
+  # Credentials come from a Secret created by Terraform, never from values.
+  admin:
+    existingSecret: grafana-admin
+    userKey: admin-user
+    passwordKey: admin-password
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    hosts:
+      - grafana.localtest.me
+    path: /
+  persistence:
+    enabled: false
+  defaultDashboardsEnabled: true
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      searchNamespace: ALL # the application chart ships its dashboard in its own namespace
+      folderAnnotation: grafana_folder
+      provider:
+        foldersFromFilesStructure: true
+  resources:
+    requests:
+      cpu: 50m
+      memory: 150Mi
+    limits:
+      memory: 400Mi
+
+kube-state-metrics:
+  resources:
+    requests:
+      cpu: 20m
+      memory: 64Mi
+
+prometheus-node-exporter:
+  resources:
+    requests:
+      cpu: 20m
+      memory: 32Mi

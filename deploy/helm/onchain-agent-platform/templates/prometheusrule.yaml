@@ -1,0 +1,59 @@
+{{- if and .Values.metrics.prometheusRule.enabled (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1") }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "oap.fullname" . }}
+  labels:
+    {{- include "oap.labels" . | nindent 4 }}
+    {{- with .Values.metrics.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: onchain-agent-platform.rules
+      rules:
+        # Four-golden-signals style alerts on the two services that export metrics.
+        - alert: OnchainAgentTargetDown
+          expr: up{job=~".*onchain-agent-platform-agent"} == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Agent metrics endpoint is down"
+            description: "Prometheus has not been able to scrape the agent for 5 minutes."
+
+        - alert: OnchainAgentHighErrorRate
+          expr: |
+            sum(rate(onchain_agent_requests_total{status!="ok"}[10m]))
+              /
+            clamp_min(sum(rate(onchain_agent_requests_total[10m])), 1e-9) > 0.2
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "More than 20% of /ask requests are failing"
+            description: "Check the LLM gateway (502/503 from the agent) and the MCP server."
+
+        - alert: OnchainAgentSlowAnswers
+          expr: |
+            histogram_quantile(0.95,
+              sum by (le) (rate(onchain_agent_request_duration_seconds_bucket[15m]))) > 120
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "p95 answer latency above 120 s"
+            description: "Local model is likely starved for GPU, or tool calls are timing out."
+
+        - alert: OnchainMcpToolErrors
+          expr: |
+            sum(rate(onchain_mcp_tool_calls_total{status="error"}[10m]))
+              /
+            clamp_min(sum(rate(onchain_mcp_tool_calls_total[10m])), 1e-9) > 0.3
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "More than 30% of MCP tool calls return errors"
+            description: "Usually the upstream RPC (rate limit / outage) or a missing Etherscan key."
+{{- end }}

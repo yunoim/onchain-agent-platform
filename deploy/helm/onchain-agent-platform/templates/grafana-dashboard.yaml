@@ -1,0 +1,17 @@
+{{- if .Values.metrics.dashboard.enabled }}
+# Picked up by the kube-prometheus-stack Grafana sidecar (label grafana_dashboard=1,
+# searchNamespace ALL). Dashboard JSON lives in dashboards/ so it can be edited and
+# imported by hand as well.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "oap.fullname" . }}-dashboard
+  labels:
+    {{- include "oap.labels" . | nindent 4 }}
+    {{ .Values.metrics.dashboard.label }}: "1"
+  annotations:
+    grafana_folder: {{ .Values.metrics.dashboard.folder | quote }}
+data:
+  onchain-agent-platform.json: |-
+    {{- .Files.Get "dashboards/onchain-agent-platform.json" | nindent 4 }}
+{{- end }}

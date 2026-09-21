@@ -146,5 +146,11 @@ module "platform" {
   ingress_nginx_enabled = true
   ingress_nginx_values  = local.ingress_nginx_values
 
+  # Same stack as locally; the kind-specific values file also fits two t3.medium nodes.
+  # Replace the *.localtest.me Ingress hosts with real DNS names before applying.
+  monitoring_enabled     = true
+  monitoring_values      = file("${local.repo_root}/deploy/observability/kube-prometheus-stack-values.yaml")
+  grafana_admin_password = var.grafana_admin_password
+
   depends_on = [module.eks]
 }
