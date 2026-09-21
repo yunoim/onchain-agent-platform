@@ -148,7 +148,7 @@ Langfuse 자체 호스팅은 kind에 무거워 보류, Phase 5에서 Cloud 무�
 - **재현 테스트 통과**: `terraform destroy` 2분 1초(9개 리소스, 역순 정상: 릴리스→Secret→네임스페이스→클러스터) → `terraform apply -var use_local_images=false` 11분 51초(8개 리소스: 클러스터 1m22s · ingress 1m5s · monitoring 4m58s · app 4m14s). 파드가 `ghcr.io/yunoim/onchain-agent:latest`·`onchain-mcp-server:latest` 실행 → **완료 기준 1번 최종 확인**(로컬 빌드 없이 GHCR 이미지만으로 기동)
 - 문서: README 최종본(문제 정의·산출물 표·ADR 표·실행 3경로·데모·완료 기준·레이아웃), `docs/DEMO.md`(3문 관찰 답변·포인트·트러블슈팅), ARCHITECTURE 토폴로지에 monitoring Secret·prometheus 호스트 추가, LEARNING.md Phase 6(재현 테스트·면접용 요약·다시 한다면 7가지·잘된 것)
 - 완료 기준 현황: ① apply 1회 ✅ ② 데모 3문 게이트웨이 경유 ✅(compose·kind/Helm·Terraform 클러스터 3곳) ③ LEARNING만 읽고 설명 → **사용자 자가 점검 대기**
-- 클러스터 상태: Terraform 관리, GHCR 이미지로 켜져 있음. 끄기: `terraform destroy`
+- 2026-09-22 사용자가 `terraform destroy` 실행 → 클러스터 없음, state 비어 있음. 다시 올리려면 `infra/terraform/local`에서 `terraform apply -var use_local_images=false` (약 12분, Ollama 실행 필요)
 
 ### 후속 과제 (선택)
 - MCP raw 정수 필드(`balance_wei`, `amount_raw`) 문자열화 — JS 클라이언트 2^53 정밀도
