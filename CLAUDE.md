@@ -8,6 +8,7 @@ AI 에이전트가 MCP를 통해 온체인 데이터를 읽고 분석하는 플�
 
 - GitHub: https://github.com/yunoim/onchain-agent-platform (public)
 - 이미지 레지스트리: `ghcr.io/yunoim/onchain-mcp-server`, `ghcr.io/yunoim/onchain-agent`
+- Notion 요약 페이지(한국어, 산출물·구조·개념·진행): `3e2eff09-d942-81ff-a966-cc50d160f9ff` — Phase 진행이나 결정이 바뀌면 여기도 증분 갱신
 
 ## 나에 대해
 - 통신사 BSS/OSS 13년차 플랫폼 매니저. RAG, MCP, n8n 기반 에이전트 구축 경험 있음
